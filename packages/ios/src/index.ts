@@ -19,6 +19,9 @@ export type { IosTransportOptions as IosOptions } from './transport.ts';
  * Locators resolve on the host over each observation.
  */
 export function ios(options: IosTransportOptions = {}): EngineHandle {
+  if (options.transition !== undefined && (!Number.isSafeInteger(options.transition) || options.transition < 0)) {
+    throw new ConfigurationError('INVALID_CONFIG', 'ios: `transition` must be a non-negative integer of milliseconds');
+  }
   let udid: string | undefined;
   let bundleId: string | undefined;
   const served = connectEngine({

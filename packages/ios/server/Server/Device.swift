@@ -130,7 +130,7 @@ final class Device {
       var states: [String: Bool] = [:]
       if !node.isEnabled { states["disabled"] = true }
       if node.isSelected { states["selected"] = true }
-      if checked == true { states["checked"] = true }
+      if let checked { states["checked"] = checked }
       if spelled?.expanded == true { states["expanded"] = true }
       if isSecure { states["secure"] = true }
       if hasKeyboardFocus(node) { states["focused"] = true }
@@ -285,7 +285,8 @@ final class Device {
       let duration = (action["durationMs"] as? Double ?? 800) / 1000
       if let target, target.exists { target.press(forDuration: duration) } else { coordinate(center, app).press(forDuration: duration) }
     case "check", "uncheck":
-      if node.checked != (kind == "check") { tap() }
+      guard let checked = node.checked else { throw EngineFailure.unsupported("node \(id) reports no checked state") }
+      if checked != (kind == "check") { tap() }
     case "fill", "clear":
       guard node.type == .textField || node.type == .secureTextField || node.type == .searchField || node.type == .textView else {
         throw EngineFailure.notActionable("node \(id) does not take text")
