@@ -65,6 +65,7 @@ import {
   VERDICT_RULES,
   type ScreenOutput,
 } from '../../src/agent/public.ts';
+import { connectEngine, socketTransport, type EngineManifest } from '../../src/engine/index.ts';
 import type { Report } from '../../src/index.ts';
 import type { ToolSet } from 'ai';
 import type { LanguageModelV2, LanguageModelV3, LanguageModelV4 } from '@ai-sdk/provider';
@@ -981,3 +982,10 @@ serialReportAttempt.cutRetry = 'interrupted';
 void (screen.getByRole('tab').or(screen.getByText('Discover')) satisfies Locator);
 // @ts-expect-error an alternative must be a Locator
 void screen.getByRole('tab').or('tab');
+// The engine protocol: a connected server is an engine handle like any other.
+const protocolManifest = { name: 'kiosk', version: '1.0.0', spiVersion: 1, methods: ['engine/observe'] } satisfies EngineManifest;
+void (connectEngine({ manifest: protocolManifest, transport: socketTransport({ host: '127.0.0.1', port: 7000 }) }) satisfies EngineHandle);
+// @ts-expect-error a manifest names only protocol methods
+void ({ ...protocolManifest, methods: ['engine/teleport'] } satisfies EngineManifest);
+// @ts-expect-error initialization options cross the wire, so they are JSON
+void connectEngine({ manifest: protocolManifest, transport: socketTransport({ host: '127.0.0.1', port: 7000 }), initializationOptions: { onReady: () => {} } });

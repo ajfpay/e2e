@@ -197,7 +197,8 @@
           {
             "group": "Engine contract",
             "pages": [
-              "reference/engine"
+              "reference/engine",
+              "reference/engine-protocol"
             ]
           }
         ]
