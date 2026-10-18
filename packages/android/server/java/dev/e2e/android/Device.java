@@ -186,10 +186,10 @@ final class Device {
       // Masked from a scan of every window, not from the tree: a field the
       // tree leaves out (past the node cap, in a window it skips) is never
       // shown unmasked.
-      List<Rect> secure = secureFields();
+      List<Rect> before = secureFields();
       Bitmap capture = automation.takeScreenshot();
       // A field that appeared or moved during the capture is masked too.
-      secure.addAll(secureFields());
+      List<Rect> secure = union(before, secureFields());
       Bitmap bitmap = masked(capture, secure);
       if (bitmap != null) {
         snapshot.put("maskedRegionCount", secure.size());
@@ -544,10 +544,9 @@ final class Device {
   /** A screenshot with every secure field painted over, found by a scan that leaves the observation's refs alone. */
   String screenshotBase64(Operation operation) throws Exception {
     checkCancelled(operation);
-    List<Rect> fields = secureFields();
+    List<Rect> before = secureFields();
     Bitmap capture = automation.takeScreenshot();
-    fields.addAll(secureFields());
-    Bitmap bitmap = masked(capture, fields);
+    Bitmap bitmap = masked(capture, union(before, secureFields()));
     if (bitmap == null) throw EngineException.failure("the screen could not be captured");
     try {
       return encodePng(bitmap);
@@ -787,6 +786,13 @@ final class Device {
     } finally {
       descriptor.close();
     }
+  }
+
+  /** The regions of both scans, each once: the count reports what was painted. */
+  private static List<Rect> union(List<Rect> first, List<Rect> second) {
+    List<Rect> regions = new ArrayList<>(first);
+    for (Rect region : second) if (!regions.contains(region)) regions.add(region);
+    return regions;
   }
 
   /** Every secure field on screen, with no node cap: what a capture must mask. */
