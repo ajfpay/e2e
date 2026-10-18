@@ -201,7 +201,7 @@ for (const [label, engine] of Object.entries(factories)) {
 writeFileSync(path.join(import.meta.dirname, 'results.json'), `${JSON.stringify(results, null, 2)}\n`);
 
 const engines = Object.keys(results);
-const operations = Object.keys(results['agent-device'] ?? {});
+const operations = [...new Set(Object.values(results).flatMap((samples) => Object.keys(samples)))];
 const format = (value: number): string => (Number.isNaN(value) ? '-' : value >= 100 ? value.toFixed(0) : value.toFixed(1));
 const cell = (engine: string, name: string): string => {
   const values = results[engine]?.[name] ?? [];
