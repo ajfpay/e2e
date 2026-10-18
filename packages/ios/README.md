@@ -51,48 +51,53 @@ engine with `waitForIdle: false`, and prints the p50 of each.
 ## Results
 
 Measured 2026-10-18 on a Mac mini (M5 Pro), iPhone 17 Pro simulator on iOS
-26.5, mobile benchmark app, against `mobile()` on agent-device 0.21.28 with
-the benchmark's settings.
+26.5, mobile benchmark app, against `mobile()` on agent-device 0.21.28, both
+with the benchmark's `transition: 1500`.
 
-The deterministic suite (`e2e.ios.config.ts`, 41 tests, one worker):
+The deterministic suite (`e2e.ios.config.ts`, 41 tests, one worker): both
+engines pass all 41, twice in a row.
 
-| | agent-device | direct | direct, `waitForIdle: false` |
+| Suite | agent-device | Swift | Speedup |
 | --- | --- | --- | --- |
-| Passing | 41 | 35 | 30 |
-| Run time | 526s | 443s | 386s |
-| Tests both pass, agent-device time | - | 453s on 35 | 245s on 30 |
-| Same tests, direct time | - | 377s (**1.2x**) | 153s (**1.6x**) |
+| controls | 164.5s | 138.5s | 1.2x |
+| flows | 69.5s | 57.3s | 1.2x |
+| flows-lists | 233.3s | 231.2s | 1.0x |
+| login-form | 47.1s | 28.1s | 1.7x |
+| smoke | 8.9s | 6.4s | 1.4x |
+| **total** | **523s** | **461s** | **1.13x** |
 
-The six the direct engine fails are gaps in this prototype, not the
-protocol: React Native's checkbox and radio roles (three tests), `clearState`
-(no reset from inside the simulator), the Save Password sheet after login
-(another process's window), and a sticky footer the scroll does not clear.
-Without the idle wait, five more fail: the harness polls an app still
-animating.
+It matches the mobile engine where the platform gives no signal: React
+Native's checkbox and radio roles come out of the accessibility value, a
+uniquely addressed node is tapped as an XCUITest element (which scrolls a
+covered one clear and reaches another process's sheet, such as Save
+Password), and a control that arrived with the last action waits out the
+transition budget, since a presenting view drops touches while it reports
+its final frame. Restart and `clearState` relaunch from the Mac with
+`simctl`.
 
-Engine calls (`bench/bench.ts --rounds 10`, p50):
+Engine calls (`bench/bench.ts --rounds 10`, p50; the bench runs this engine
+with its default 500 ms transition):
 
-| Operation | agent-device | direct | direct, no idle wait |
+| Operation | agent-device | Swift | Swift, no idle wait |
 | --- | --- | --- | --- |
-| observe | 91.5 ms | 17.5 ms | 17.7 ms |
-| locate | 76.1 ms | 14.2 ms | 14.0 ms |
-| screenshot | 691 ms | 74.7 ms | 77.3 ms |
-| fill (19 chars) | 4856 ms | 1942 ms | 1505 ms |
-| keyboard.type (10 chars) | 1208 ms | 430 ms | 425 ms |
-| tap | 487 ms | 399 ms | 358 ms |
-| tap row, next screen up | 5 of 5 failed | 1152 ms | 390 ms |
-| back, list up | 1041 ms | 1706 ms | 1038 ms |
-| swipe | 550 ms | 1430 ms | 1424 ms |
-| restart app | 713 ms | 2637 ms | 2537 ms |
-| init (cold) | 3208 ms | 1381 ms | 1495 ms |
+| observe | 94.4 ms | 18.0 ms | 17.6 ms |
+| locate | 76.2 ms | 14.6 ms | 14.4 ms |
+| screenshot | 671 ms | 105 ms | 104 ms |
+| fill (19 chars) | 4852 ms | 1989 ms | 1538 ms |
+| keyboard.type (10 chars) | 1213 ms | 429 ms | 428 ms |
+| tap | 484 ms | 422 ms | 390 ms |
+| tap row, next screen up | 5 of 5 failed | 1631 ms | 851 ms |
+| back, list up | 1055 ms | 1710 ms | 1034 ms |
+| swipe | 558 ms | 1433 ms | 1423 ms |
+| restart app | 710 ms | 1705 ms | 1714 ms |
+| init (cold) | 3487 ms | 1355 ms | 1378 ms |
 
-Reads are 5-9x faster: one XCUITest snapshot and a screenshot in process,
+Reads are 5-6x faster: one XCUITest snapshot and a screenshot in process,
 with no daemon or HTTP hop. Gestures are where XCUITest itself sets the
 pace: its idle waits, and `press(forDuration:thenDragTo:)` taking over a
-second for a swipe. Restart goes through `terminate()` and `activate()`,
-which wait for the launch; agent-device launches with `simctl` from the
-host. The next levers are XCTest's private event synthesis for gestures
-(what WebDriverAgent uses) and a host-side relaunch.
+second for a swipe. Restart waits until the relaunched app answers an
+observation. The next lever is XCTest's private event synthesis for
+gestures, what WebDriverAgent uses.
 
 ## `waitForIdle: false`
 
