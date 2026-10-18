@@ -38,9 +38,26 @@ final class Device {
 
   private var app: XCUIApplication?
   private var bundleId: String?
-  /// Each observed node's frame and kind, by id; ids carry the observation's generation.
-  private var nodes: [String: (frame: CGRect, type: XCUIElement.ElementType, value: String?)] = [:]
+  /// What each node of the newest observation was, by id; ids carry the observation's generation.
+  private var nodes: [String: Observed] = [:]
+  /// How many nodes of the newest observation share each address, so only a unique one is resolved to an element.
+  private var addresses: [String: Int] = [:]
   private var generation = 0
+  /// How long a control that arrived with the last action gets to finish arriving; see `arrived`.
+  private let transition = (Double(ProcessInfo.processInfo.environment["E2E_TRANSITION_MS"] ?? "") ?? 500) / 1000
+  /// When the last action returned, and where each control was in the observation it was resolved from.
+  private var lastActionAt = Date.distantPast
+  private var beforeAction: [String: CGRect] = [:]
+
+  /// One observed node: where it was, and how XCUITest can find it again.
+  struct Observed {
+    let frame: CGRect
+    let type: XCUIElement.ElementType
+    let value: String?
+    let checked: Bool?
+    let identifier: String
+    let label: String
+  }
 
   func initialize(app declared: [String: Any]?, _ operation: Operation) throws {
     bundleId = declared?["bundleId"] as? String
@@ -53,6 +70,7 @@ final class Device {
 
   func startAttempt() {
     nodes = [:]
+    addresses = [:]
   }
 
   func environment() -> [String: String] {
@@ -76,7 +94,8 @@ final class Device {
     let snapshot = try app.snapshot()
     let viewport = snapshot.frame
     generation += 1
-    var fresh: [String: (frame: CGRect, type: XCUIElement.ElementType, value: String?)] = [:]
+    var fresh: [String: Observed] = [:]
+    var counts: [String: Int] = [:]
     var counter = 0
     var keyboard = false
     var secureFrames: [CGRect] = []
@@ -88,27 +107,31 @@ final class Device {
       }
       counter += 1
       let id = "\(generation).\(counter)"
-      let value = node.value.map { "\($0)" }
-      fresh[id] = (node.frame, node.elementType, value)
-      var out: [String: Any] = ["ref": ["id": id, "revision": ""]]
-      let role = Device.roles[node.elementType] ?? "group"
-      out["role"] = role
+      let raw = node.value.map { "\($0)" }
+      // React Native spells the roles UIKit has no trait for into the value
+      // of an `Other` ("radio button, checked"); that is the role the app declared.
+      let spelled = node.elementType == .other ? ReactNativeValue(raw) : nil
+      let role = spelled?.role ?? Device.roles[node.elementType] ?? "group"
       let isSecure = node.elementType == .secureTextField
+      // XCTest reports an empty field's placeholder as its value.
+      let value = spelled.map { $0.value } ?? (raw == node.placeholderValue ? nil : raw)
+      let checked = spelled?.checked ?? (Device.checkable.contains(role) ? Device.checkedValue(value) : nil)
+      fresh[id] = Observed(frame: node.frame, type: node.elementType, value: value, checked: checked, identifier: node.identifier, label: node.label)
+      for address in Device.addresses(node.elementType, node.identifier, node.label) { counts[address, default: 0] += 1 }
+      var out: [String: Any] = ["ref": ["id": id, "revision": ""], "role": role]
       if isSecure { secureFrames.append(node.frame) }
-      let label = node.label.isEmpty ? nil : node.label
-      if let label {
-        out["name"] = String(label.prefix(256))
-        out["text"] = String(label.prefix(512))
+      if !node.label.isEmpty {
+        out["name"] = String(node.label.prefix(256))
+        out["text"] = String(node.label.prefix(512))
       }
-      if role == "textbox", !isSecure, let value, !value.isEmpty, value != node.placeholderValue {
-        out["value"] = value
-      }
+      if !isSecure, let value, !value.isEmpty { out["value"] = String(value.prefix(512)) }
       if !node.identifier.isEmpty { out["testId"] = node.identifier }
       if isSecure { out["inputPurpose"] = "password" }
       var states: [String: Bool] = [:]
       if !node.isEnabled { states["disabled"] = true }
       if node.isSelected { states["selected"] = true }
-      if role == "switch" || role == "checkbox", value == "1" { states["checked"] = true }
+      if checked == true { states["checked"] = true }
+      if spelled?.expanded == true { states["expanded"] = true }
       if isSecure { states["secure"] = true }
       if hasKeyboardFocus(node) { states["focused"] = true }
       // Off the screen is hidden, as a person sees it: scrolling brings it in.
@@ -123,6 +146,7 @@ final class Device {
 
     let tree = node(snapshot.children.compactMap(convert))
     nodes = fresh
+    addresses = counts
     let size = snapshot.frame.size
     var result: [String: Any] = [
       "root": tree.merging(["rect": ["x": 0, "y": 0, "width": size.width, "height": size.height]]) { $1 },
@@ -151,6 +175,86 @@ final class Device {
     ["ref": ["id": "root", "revision": ""], "role": "screen", "children": children]
   }
 
+  private static let checkable: Set<String> = ["switch", "checkbox", "radio"]
+
+  /// The checked state a native control spells into its value, or nil when it says none.
+  private static func checkedValue(_ value: String?) -> Bool? {
+    switch value?.trimmingCharacters(in: .whitespaces).lowercased() {
+    case "1", "on", "true", "checked": return true
+    case "0", "off", "false", "unchecked": return false
+    default: return nil
+    }
+  }
+
+  /// The ways XCUITest can find a node again: by identifier, else by type and label.
+  private static func addresses(_ type: XCUIElement.ElementType, _ identifier: String, _ label: String) -> [String] {
+    var keys: [String] = []
+    if !identifier.isEmpty { keys.append("id:\(identifier)") }
+    if !label.isEmpty { keys.append("label:\(type.rawValue):\(label)") }
+    return keys
+  }
+
+  /// The node as an element XCUITest resolves itself, when the observation
+  /// addresses it uniquely. An element tap finds the hit point, scrolls a
+  /// covered element clear (under a sticky footer), and reaches views other
+  /// processes host (a system sheet), which a tap at a point cannot.
+  private func element(_ node: Observed, _ app: XCUIApplication) -> XCUIElement? {
+    let query = app.descendants(matching: node.type)
+    if !node.identifier.isEmpty, addresses["id:\(node.identifier)"] == 1 {
+      return query.matching(NSPredicate(format: "identifier == %@", node.identifier)).firstMatch
+    }
+    if !node.label.isEmpty, addresses["label:\(node.type.rawValue):\(node.label)"] == 1 {
+      return query.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
+    }
+    return nil
+  }
+
+  /// Lets a control that came with the last action finish arriving, as the
+  /// mobile engine does: one already at the same place in the observation
+  /// the last action was resolved from is acted on at once; anything else
+  /// waits out the rest of the transition budget since that action. A view
+  /// presenting reports its final frame from the first frame of the
+  /// transition and drops touches until it lands, so time is the only signal.
+  private func arrived(_ node: Observed, _ operation: Operation) throws {
+    let remaining = transition - Date().timeIntervalSince(lastActionAt)
+    guard remaining > 0 else { return }
+    if let key = Device.addresses(node.type, node.identifier, node.label).first, beforeAction[key] == node.frame { return }
+    let until = Date(timeIntervalSinceNow: remaining)
+    while Date() < until {
+      try operation.check()
+      Thread.sleep(forTimeInterval: min(0.025, until.timeIntervalSinceNow))
+    }
+  }
+
+  /// Records an action: when it returned, and the observation it was resolved from.
+  private func acted() {
+    lastActionAt = Date()
+    var places: [String: CGRect] = [:]
+    for node in nodes.values {
+      if let key = Device.addresses(node.type, node.identifier, node.label).first, addresses[key] == 1 { places[key] = node.frame }
+    }
+    beforeAction = places
+  }
+
+  /// Waits for an element that moved since the observation to come to rest:
+  /// a sheet still sliding in swallows a tap, and XCUITest's idle wait does
+  /// not cover a view another process animates. One where the observation
+  /// saw it is acted on at once; otherwise two reads a frame apart must agree.
+  private func settle(_ element: XCUIElement, observed: CGRect, _ operation: Operation) throws {
+    guard element.exists else { return }
+    var current = element.frame
+    if current == observed { return }
+    let deadline = Date(timeIntervalSinceNow: min(2, operation.timeoutMs / 1000))
+    while Date() < deadline {
+      try operation.check()
+      Thread.sleep(forTimeInterval: 0.05)
+      guard element.exists else { return }
+      let next = element.frame
+      if next == current { return }
+      current = next
+    }
+  }
+
   // MARK: actions
 
   func perform(_ id: String, _ action: [String: Any], _ operation: Operation) throws {
@@ -159,26 +263,34 @@ final class Device {
     let kind = action["kind"] as? String ?? ""
     if id == "root" {
       guard kind == "swipe" else { throw EngineFailure.unsupported("the screen root only takes a swipe") }
+      defer { acted() }
       try swipe(in: app.frame, direction: action["direction"] as? String ?? "down", momentum: action["momentum"] as? String, app)
       return
     }
     guard let node = nodes[id] else { throw EngineFailure.stale(id) }
+    try arrived(node, operation)
+    let target = element(node, app)
+    if let target { try settle(target, observed: node.frame, operation) }
     let center = try actionable(node.frame, id, app)
+    defer { acted() }
+    let tap = {
+      if let target, target.exists { target.tap() } else { self.coordinate(center, app).tap() }
+    }
     switch kind {
     case "tap", "focus":
-      coordinate(center, app).tap()
+      tap()
     case "doubleTap":
-      coordinate(center, app).doubleTap()
+      if let target, target.exists { target.doubleTap() } else { coordinate(center, app).doubleTap() }
     case "longPress":
-      coordinate(center, app).press(forDuration: (action["durationMs"] as? Double ?? 800) / 1000)
+      let duration = (action["durationMs"] as? Double ?? 800) / 1000
+      if let target, target.exists { target.press(forDuration: duration) } else { coordinate(center, app).press(forDuration: duration) }
     case "check", "uncheck":
-      let checked = node.value == "1"
-      if checked != (kind == "check") { coordinate(center, app).tap() }
+      if node.checked != (kind == "check") { tap() }
     case "fill", "clear":
       guard node.type == .textField || node.type == .secureTextField || node.type == .searchField || node.type == .textView else {
         throw EngineFailure.notActionable("node \(id) does not take text")
       }
-      coordinate(center, app).tap()
+      tap()
       if node.type == .secureTextField {
         // iOS empties a secure field on the first keystroke after it takes
         // focus, so typing replaces it; a clear types one character and
@@ -190,7 +302,7 @@ final class Device {
       if existing > 0 { app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing)) }
       if kind == "fill" { app.typeText(action["value"] as? String ?? "") }
     case "press":
-      if node.type == .textField || node.type == .secureTextField || node.type == .textView { coordinate(center, app).tap() }
+      if node.type == .textField || node.type == .secureTextField || node.type == .textView { tap() }
       try press(action["key"] as? String ?? "", operation)
     case "swipe":
       try swipe(in: node.frame, direction: action["direction"] as? String ?? "down", momentum: action["momentum"] as? String, app)
@@ -202,6 +314,7 @@ final class Device {
   func performAt(_ point: CGPoint, _ action: [String: Any], _ operation: Operation) throws {
     try operation.check()
     let app = try requireApp()
+    defer { acted() }
     let at = coordinate(point, app)
     switch action["kind"] as? String ?? "" {
     case "tap": at.tap()
@@ -258,6 +371,7 @@ final class Device {
   func back(_ operation: Operation) throws {
     try operation.check()
     let app = try requireApp()
+    defer { acted() }
     let size = app.frame.size
     let from = coordinate(CGPoint(x: 2, y: size.height / 2), app)
     from.press(forDuration: 0.05, thenDragTo: coordinate(CGPoint(x: size.width * 0.75, y: size.height / 2), app))

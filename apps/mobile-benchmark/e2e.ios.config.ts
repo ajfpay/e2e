@@ -17,7 +17,7 @@ export default {
   targets: [
     {
       name: 'ios-simulator',
-      engine: process.env.BENCH_ENGINE === 'agent-device' ? agentDevice : ios({ waitForIdle: process.env.E2E_IOS_WAIT_FOR_IDLE !== '0' }),
+      engine: process.env.BENCH_ENGINE === 'agent-device' ? agentDevice : ios({ waitForIdle: process.env.E2E_IOS_WAIT_FOR_IDLE !== '0', transition: 1_500 }),
       app: { bundleId: 'dev.e2e.benchmark', appPath: process.env.E2E_MOBILE_BENCHMARK_IOS_APP, identity: 'dev.e2e.benchmark-ios' },
     },
   ],
