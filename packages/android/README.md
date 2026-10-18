@@ -61,7 +61,7 @@ The deterministic suite (`e2e.android.config.ts`, 42 tests, one worker):
 | flows-lists | 110.1s | 72.8s | 1.5x |
 | login-form | 28.7s | 8.6s | 3.3x |
 | smoke | 3.8s | 1.4s | 2.6x |
-| **total** | **321s** | **137s** | **2.3x** |
+| **total** | **321s** | **132s** | **2.4x** |
 
 Both engines pass all 42. The direct engine declares the same device
 surface as the mobile engine: `press` takes Enter, Space, or one character,
