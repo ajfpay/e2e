@@ -28,6 +28,8 @@ const SERVER_PACKAGE = 'dev.e2e.android.server';
 const RUNNER = `${SERVER_PACKAGE}/dev.e2e.android.EngineInstrumentation`;
 const SOCKET = 'e2e-android-engine';
 const HASH_FILE = '/data/local/tmp/e2e-android-server.sha256';
+/** Budget of each adb call that cleans up on the device. */
+const CLEANUP_MS = 3_000;
 /** How long the instrumentation may take to start and open its socket. */
 const READY_TIMEOUT_MS = 30_000;
 
@@ -78,7 +80,12 @@ async function ensureServer(run: (args: readonly string[]) => Promise<string>, a
   const hash = createHash('sha256').update(readFileSync(apk)).digest('hex');
   const installed = (await run(['shell', `cat ${HASH_FILE} 2>/dev/null; pm path ${SERVER_PACKAGE} 2>/dev/null; true`])).trim();
   if (installed.startsWith(hash) && installed.includes('package:')) return;
-  await run(['install', '-r', '-t', '-g', apk]);
+  await run(['install', '-r', '-t', '-g', apk]).catch(async (cause: unknown) => {
+    // A server signed with another key cannot be updated, only replaced.
+    if (!String(cause).includes('INSTALL_FAILED_UPDATE_INCOMPATIBLE')) throw cause;
+    await run(['uninstall', SERVER_PACKAGE]);
+    await run(['install', '-t', '-g', apk]);
+  });
   await run(['shell', `echo ${hash} > ${HASH_FILE}`]);
 }
 
@@ -124,7 +131,11 @@ export function androidTransport(options: AndroidTransportOptions = {}): EngineT
       // device, holding its socket; only a force-stop ends it there.
       const stopOnDevice = (signal?: AbortSignal): Promise<unknown> =>
         adb(executable, ['-s', serial, 'shell', 'am', 'force-stop', SERVER_PACKAGE], signal).catch(() => undefined);
-      const server = await startServer(executable, serial, context.signal);
+      const server = await startServer(executable, serial, context.signal).catch(async (cause: unknown) => {
+        // A server that never said it was ready may still have bound its socket.
+        await stopOnDevice(AbortSignal.timeout(CLEANUP_MS));
+        throw cause;
+      });
       let forwarded: number | undefined;
       const unforward = (signal?: AbortSignal): Promise<unknown> =>
         forwarded === undefined ? Promise.resolve() : adb(executable, ['-s', serial, 'forward', '--remove', `tcp:${String(forwarded)}`], signal).catch(() => undefined);
@@ -139,8 +150,8 @@ export function androidTransport(options: AndroidTransportOptions = {}): EngineT
         });
       } catch (cause) {
         server.process.kill();
-        await unforward();
-        await stopOnDevice();
+        await unforward(AbortSignal.timeout(CLEANUP_MS));
+        await stopOnDevice(AbortSignal.timeout(CLEANUP_MS));
         throw cause;
       }
       return {
@@ -148,7 +159,6 @@ export function androidTransport(options: AndroidTransportOptions = {}): EngineT
         output: socket,
         diagnostics: () => `device ${serial}; instrumentation output: ${server.output() || '(none)'}`,
         async close(timeoutMs) {
-          const deadline = AbortSignal.timeout(Math.max(1, timeoutMs));
           socket.end();
           const { process: child } = server;
           const exited = new Promise<void>((resolve) => {
@@ -159,8 +169,11 @@ export function androidTransport(options: AndroidTransportOptions = {}): EngineT
           await exited;
           clearTimeout(timer);
           socket.destroy();
-          await unforward(deadline);
-          await stopOnDevice(deadline);
+          // The device cleanup gets a short budget of its own: a host process
+          // that used the whole budget must still not leave the server
+          // running or the port forwarded.
+          await unforward(AbortSignal.timeout(CLEANUP_MS));
+          await stopOnDevice(AbortSignal.timeout(CLEANUP_MS));
         },
       };
     },

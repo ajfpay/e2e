@@ -65,7 +65,11 @@ mkdirSync(path.join(build, 'dex'), { recursive: true });
 mkdirSync(path.join(build, 'assets'), { recursive: true });
 mkdirSync(path.dirname(output), { recursive: true });
 
-run(javac, ['-source', '11', '-target', '11', '-Xlint:-options', '-encoding', 'UTF-8', '-classpath', androidJar, '-d', path.join(build, 'classes'), ...filesUnder(path.join(root, 'server', 'java'), '.java')]);
+// The platform jar is the boot class path, so a `java.*` API that the JDK
+// has and Android does not fails the build instead of the device; the SDK's
+// lambda stubs stand in for the JDK classes lambdas compile against.
+const bootClassPath = [androidJar, path.join(tools, 'core-lambda-stubs.jar')].join(path.delimiter);
+run(javac, ['-source', '8', '-target', '8', '-Xlint:-options', '-encoding', 'UTF-8', '-bootclasspath', bootClassPath, '-classpath', androidJar, '-d', path.join(build, 'classes'), ...filesUnder(path.join(root, 'server', 'java'), '.java')]);
 run(path.join(tools, 'd8'), ['--release', '--min-api', '28', '--lib', androidJar, '--output', path.join(build, 'dex'), ...filesUnder(path.join(build, 'classes'), '.class')]);
 writeFileSync(path.join(build, 'assets', 'manifest.json'), `${JSON.stringify(MANIFEST, null, 2)}\n`);
 const unsigned = path.join(build, 'unsigned.apk');
@@ -73,9 +77,12 @@ run(path.join(tools, 'aapt2'), ['link', '--manifest', path.join(root, 'server', 
 run(jar, ['--update', '--no-manifest', '--file', unsigned, '-C', path.join(build, 'dex'), 'classes.dex']);
 const aligned = path.join(build, 'aligned.apk');
 run(path.join(tools, 'zipalign'), ['-f', '4', unsigned, aligned]);
-const keystore = path.join(build, 'debug.keystore');
+// The Android SDK's debug keystore, created where the SDK would: a key that
+// outlives `build/`, so a rebuilt server still updates the installed one.
+const keystore = path.join(homedir(), '.android', 'debug.keystore');
 if (!existsSync(keystore)) {
-  run(keytool, ['-genkeypair', '-keystore', keystore, '-storepass', 'android', '-keypass', 'android', '-alias', 'e2e', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=e2e Android engine']);
+  mkdirSync(path.dirname(keystore), { recursive: true });
+  run(keytool, ['-genkeypair', '-keystore', keystore, '-storepass', 'android', '-keypass', 'android', '-alias', 'androiddebugkey', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '10000', '-dname', 'CN=Android Debug,O=Android,C=US']);
 }
-run(path.join(tools, 'apksigner'), ['sign', '--ks', keystore, '--ks-pass', 'pass:android', '--out', output, aligned]);
+run(path.join(tools, 'apksigner'), ['sign', '--ks', keystore, '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', output, aligned]);
 process.stdout.write(`built ${path.relative(process.cwd(), output)}\n`);

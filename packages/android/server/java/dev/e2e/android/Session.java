@@ -64,8 +64,21 @@ final class Session implements Runnable {
           send(response);
           continue;
         }
-        String method = message.optString("method", null);
-        if (method == null) continue;
+        String method = message.opt("method") instanceof String ? message.getString("method") : null;
+        if (method == null) {
+          // This server sends no requests, so an id here asks for an answer it cannot get.
+          if (message.has("id")) {
+            JSONObject error = new JSONObject();
+            error.put("code", -32600);
+            error.put("message", "a request needs a string method");
+            JSONObject response = new JSONObject();
+            response.put("jsonrpc", "2.0");
+            response.put("id", message.get("id"));
+            response.put("error", error);
+            send(response);
+          }
+          continue;
+        }
         if (!message.has("id")) {
           if (notification(method, message.optJSONObject("params"))) break;
           continue;
@@ -88,7 +101,9 @@ final class Session implements Runnable {
       worker.shutdown();
       // The next client gets the device only once this one's work stopped.
       try {
-        worker.awaitTermination(10, TimeUnit.SECONDS);
+        while (!worker.awaitTermination(1, TimeUnit.SECONDS)) {
+          Log.w(EngineInstrumentation.TAG, "waiting for the previous session's work to stop");
+        }
       } catch (InterruptedException ignored) {
         Thread.currentThread().interrupt();
       }

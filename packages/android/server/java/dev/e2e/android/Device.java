@@ -187,7 +187,10 @@ final class Device {
       // tree leaves out (past the node cap, in a window it skips) is never
       // shown unmasked.
       List<Rect> secure = secureFields();
-      Bitmap bitmap = masked(automation.takeScreenshot(), secure);
+      Bitmap capture = automation.takeScreenshot();
+      // A field that appeared or moved during the capture is masked too.
+      secure.addAll(secureFields());
+      Bitmap bitmap = masked(capture, secure);
       if (bitmap != null) {
         snapshot.put("maskedRegionCount", secure.size());
         JSONObject image = new JSONObject();
@@ -542,7 +545,9 @@ final class Device {
   String screenshotBase64(Operation operation) throws Exception {
     checkCancelled(operation);
     List<Rect> fields = secureFields();
-    Bitmap bitmap = masked(automation.takeScreenshot(), fields);
+    Bitmap capture = automation.takeScreenshot();
+    fields.addAll(secureFields());
+    Bitmap bitmap = masked(capture, fields);
     if (bitmap == null) throw EngineException.failure("the screen could not be captured");
     try {
       return encodePng(bitmap);
