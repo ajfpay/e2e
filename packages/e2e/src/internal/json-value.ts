@@ -6,6 +6,7 @@
  */
 
 import { isSecret } from '../secrets.ts';
+import type { JsonValue } from '../types.ts';
 import { ConfigurationError, TestError } from './errors.ts';
 
 export interface JsonValueRules {
@@ -69,4 +70,9 @@ export function validateJsonValue(value: unknown, label: string, rules: JsonValu
     }
   };
   visit(value);
+}
+
+/** `Array.isArray` does not narrow a readonly array away; this does. */
+export function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
 }

@@ -3,6 +3,7 @@
 import { StringDecoder } from 'node:string_decoder';
 import { MIN_SECRET_LENGTH, secretLength } from '../config/secrets.ts';
 import { escapeRegexpChar } from './regexp.ts';
+import { bound } from './text.ts';
 
 /**
  * Builds a redactor replacing every registered secret value, in each spelling
@@ -31,6 +32,8 @@ interface Compiled {
   readonly redactCut: (text: string) => string;
   /** `redact` that also rewrites fragments of values; see `SecretLedger.redactFragments`. */
   readonly redactFragments: (text: string) => string;
+  /** `redact` capped at a length; see `SecretLedger.redactBound`. */
+  readonly redactBound: (text: string, maxChars: number) => string;
   /** Every occurrence of every value, leftmost first and never overlapping: the matches `redact` rewrites. Absent with no values. */
   readonly pattern: RegExp | undefined;
   /** The most text one occurrence can span; a piece shorter than this holds at most part of one. */
@@ -69,6 +72,7 @@ function compile(values: readonly (readonly [string, string])[]): Compiled {
       redact: (text) => text,
       redactCut: (text) => text,
       redactFragments: (text) => text,
+      redactBound: (text, maxChars) => bound(text, maxChars),
       pattern: undefined,
       maxFormLength: 0,
       maxMarkerLength: 0,
@@ -127,10 +131,23 @@ function compile(values: readonly (readonly [string, string])[]): Compiled {
       .map((piece, index) => (index % 2 === 1 ? piece : rewriteFragments(piece, fragments, markers)))
       .join('');
   const redactFragments = (text: string): string => rewriteEncoded(redactPlainFragments(text), redactPlainFragments, known);
+  const knownMarkers = new RegExp(known.source, 'g');
+  const redactBound = (text: string, maxChars: number): string => {
+    const redacted = redact(text);
+    const cut = bound(redacted, maxChars);
+    if (cut === redacted) return redacted;
+    let end = cut.length - 1;
+    for (const { index, 0: marker } of redacted.matchAll(knownMarkers)) {
+      if (index >= end) break;
+      if (index + marker.length > end) end = index;
+    }
+    return `${redacted.slice(0, end)}…`;
+  };
   return {
     redact,
     redactCut,
     redactFragments,
+    redactBound,
     pattern,
     maxFormLength: Math.max(...patterns.map(({ maxLength }) => maxLength)),
     maxMarkerLength: Math.max(...markers.map((marker) => marker.length)),
@@ -625,6 +642,15 @@ export class SecretLedger {
    * like `redact`.
    */
   readonly redactFragments = (text: string): string => this.compile().redactFragments(text);
+
+  /**
+   * `redact`, then capped at `maxChars` with an ellipsis, as a report field
+   * that has a length limit. A marker the cap would cut short is dropped
+   * whole: its fragment is no marker, so redacting the text again would
+   * rewrite a value it spells, such as `secret` in `<secret:`. Bound like
+   * `redact`.
+   */
+  readonly redactBound = (text: string, maxChars: number): string => this.compile().redactBound(text, maxChars);
 
   /** The most text one registered value can match in any spelling; a piece shorter than this holds at most part of one occurrence. */
   get maxFormLength(): number {

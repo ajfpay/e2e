@@ -22,6 +22,7 @@
  * as a miss.
  */
 
+import { isJsonArray } from '../internal/json-value.ts';
 import type { JsonValue } from '../types.ts';
 import { mapTraceText, type ActionTrace } from './trace.ts';
 
@@ -112,11 +113,6 @@ function spellings(templates: readonly ParamTemplate[]): readonly Spelling[] {
     }
   }
   return out.toSorted((a, b) => b.text.length - a.text.length || a.pointer.localeCompare(b.pointer) || a.placeholder.localeCompare(b.placeholder));
-}
-
-/** `Array.isArray` does not narrow a readonly array away; this does. */
-function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
-  return Array.isArray(value);
 }
 
 /**

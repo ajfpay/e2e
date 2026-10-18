@@ -319,6 +319,7 @@
         "kind": { "enum": ["agent", "locator", "assertion", "screen", "app", "session", "resource"] },
         "api": { "type": "string", "minLength": 1 },
         "label": { "type": "string", "maxLength": 8192 },
+        "instruction": { "type": "string", "maxLength": 8192 },
         "source": { "$ref": "#/$defs/source" },
         "status": { "enum": ["passed", "failed", "blocked", "timed-out", "cancelled"] },
         "startedAt": { "$ref": "#/$defs/timestamp" },

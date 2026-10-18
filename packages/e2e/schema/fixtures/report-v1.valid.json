@@ -88,6 +88,7 @@
                 "kind": "agent",
                 "api": "agent.act",
                 "label": "adds shoes to the cart",
+                "instruction": "adds {item} to the cart",
                 "source": {
                   "file": "tests/example.e2e.ts",
                   "line": 3,

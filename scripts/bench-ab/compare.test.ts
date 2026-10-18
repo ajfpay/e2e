@@ -10,6 +10,8 @@ interface StepSpec {
   status?: string;
   cache?: string;
   nodes?: number;
+  label?: string;
+  instruction?: string;
 }
 
 /** A report with one test per entry of `tests`, each one attempt of the given steps. */
@@ -32,7 +34,8 @@ function report(tests: Record<string, StepSpec[]>, status = 'passed'): ReportDoc
           steps: steps.map((step) => ({
             kind: step.api.split('.')[0]!,
             api: step.api,
-            label: title,
+            label: step.label ?? title,
+            ...(step.instruction === undefined ? {} : { instruction: step.instruction }),
             status: step.status ?? 'passed',
             durationMs: step.durationMs,
             ...(step.cache === undefined ? {} : { cache: { mode: step.cache } }),
@@ -145,6 +148,13 @@ describe('compareSamples', () => {
       'removed tests/a.e2e.ts › gone (web)',
       'unstable tests/a.e2e.ts › one (web)',
     ]);
+  });
+
+  it('reads an agent step by its instruction as written, not its label filled with a value that differs on every run', () => {
+    const run = (value: string) =>
+      sampleFromReport(report({ one: [{ api: 'agent.act', durationMs: 10, label: `add ${value}`, instruction: 'add {title}' }] }), 100);
+    const changes = compareSamples([run('Cabin a'), run('Cabin b')], [run('Cabin c'), run('Cabin d')], limits).changes;
+    assert.deepEqual(changes, []);
   });
 
   it('reports both builds when both have unstable step sequences', () => {

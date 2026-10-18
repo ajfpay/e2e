@@ -17,6 +17,8 @@ interface ReportStep {
   readonly kind: string;
   readonly api: string;
   readonly label?: string;
+  /** An agent step's instruction as written, when its label fills in params that can differ on every run. */
+  readonly instruction?: string;
   readonly status: string;
   readonly durationMs: number;
   readonly error?: { readonly code?: string };
@@ -87,7 +89,7 @@ function stepsOf(attempt: ReportAttempt): readonly ReportStep[] {
 }
 
 function stepLine(step: ReportStep): string {
-  const parts = [step.kind, step.api, JSON.stringify(step.label ?? ''), step.status];
+  const parts = [step.kind, step.api, JSON.stringify(step.instruction ?? step.label ?? ''), step.status];
   if (step.error?.code !== undefined) parts.push(step.error.code);
   if (step.cache !== undefined) parts.push(`cache:${step.cache.mode}${step.cache.reason === undefined ? '' : `:${step.cache.reason}`}`);
   return parts.join(' ');

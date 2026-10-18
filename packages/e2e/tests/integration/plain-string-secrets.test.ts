@@ -112,7 +112,8 @@ describe('a secret value passed as a plain string', () => {
     const attempt = result.attempts.at(-1)!;
     expect(attempt.error?.code).toBe('ASSERTION_FAILED');
     expect(attempt.error?.message).toContain(`getByText("missing ${MARKER}")`);
-    expect(attempt.steps.map((step) => step.label)).toContain(`inspect ${MARKER} with {note}`);
+    expect(attempt.steps.map((step) => step.label)).toContain(`inspect ${MARKER} with ${MARKER}`);
+    expect(attempt.steps.map((step) => step.instruction)).toContain(`inspect ${MARKER} with {note}`);
   });
 
   it('hands the executor the instruction, params, and agent context redacted', () => {

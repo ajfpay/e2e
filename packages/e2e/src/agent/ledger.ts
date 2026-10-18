@@ -33,12 +33,14 @@ export interface PriorStep {
 /**
  * Projects recorded steps onto the ledger's shape, sanitized here — the one
  * trust boundary where step records become model input — and carrying nothing
- * that names runner internals.
+ * that names runner internals. An agent step reads as its instruction as
+ * written, not the label that fills its params in, so the label never
+ * changes what a later step's model reads.
  */
 export function projectPriorSteps(records: readonly StepRecord[]): PriorStep[] {
   return records.map((step) => ({
     api: step.api,
-    label: boundedText(step.label),
+    label: boundedText(step.instruction ?? step.label),
     status: step.status,
     ...(step.explanation === undefined ? {} : { explanation: boundedText(handoffOf(step)) }),
   }));

@@ -113,6 +113,8 @@ export interface AgentContext {
   readonly redact: (text: string) => string;
   /** The same ledger's redaction for text an engine cut at a length limit. */
   readonly redactCut: (text: string) => string;
+  /** The same ledger's redaction for text the runner caps at a length limit. */
+  readonly redactBound: (text: string, maxChars: number) => string;
   /** How far a secret reached the session; once one was filled, no pixels leave it for the rest of the attempt. */
   readonly exposure: SecretExposure;
   readonly artifacts: ArtifactSink;

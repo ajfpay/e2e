@@ -191,6 +191,12 @@ export interface StepRecord {
   kind: StepKind;
   api: string;
   label: string;
+  /**
+   * An agent step's instruction as written, when the label fills `{name}` in
+   * from the params. The prior-step ledger quotes this, so
+   * a later step's model reads the step as it was given.
+   */
+  instruction?: string;
   /** The test line the step was called from; absent when no project line was on the stack. */
   source?: SourceLocation;
   status: 'passed' | 'failed' | 'blocked' | 'timed-out' | 'cancelled';
@@ -287,6 +293,8 @@ export interface StepRunOptions {
   readonly verifies?: boolean;
   /** The configured agent an agent step runs with, recorded on the step. */
   readonly agent?: string | undefined;
+  /** An agent step's instruction as written, bounded like the label, recorded on the step when the label reads differently. */
+  readonly instruction?: string | undefined;
 }
 
 export interface StepRecorderOptions {
@@ -424,6 +432,7 @@ export class StepRecorder {
     // The label is published, reported, and traced as is: a secret the test
     // spelled into an instruction or a locator stops here, once.
     const label = this.redact?.(rawLabel) ?? rawLabel;
+    const instruction = options.instruction === undefined ? undefined : (this.redact?.(options.instruction) ?? options.instruction);
     const index = this.steps.length;
     // A verification run inside another step (an `onAction` hook's) proves
     // only what the steps before that one left, never the step still running.
@@ -437,6 +446,7 @@ export class StepRecorder {
       kind,
       api,
       label,
+      ...(instruction === undefined || instruction === label ? {} : { instruction }),
       ...(source === undefined ? {} : { source }),
       status: 'passed',
       startedAt,

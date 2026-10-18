@@ -334,6 +334,28 @@ describe('redactCut', () => {
   });
 });
 
+describe('redactBound', () => {
+  it('redacts, then caps the text with an ellipsis', () => {
+    const ledger = new SecretLedger([['member', 'hunter2-secret']]);
+    expect(ledger.redactBound('type hunter2-secret now', 64)).toBe('type <secret:member> now');
+    expect(ledger.redactBound('type hunter2-secret now', 8)).toBe('type …');
+    expect(new SecretLedger().redactBound('a long plain text', 8)).toBe('a long …');
+  });
+
+  it('drops a marker the cap would cut short whole, whatever its name spells, and keeps one before the cut', () => {
+    const ledger = new SecretLedger([['ops@acme.test.password', 'secret'], ['stripe/live key', 'sk_live_Zr8Kq2xx']]);
+    const text = 'paste sk_live_Zr8Kq2xx here and there';
+    expect(ledger.redactBound(text, 30)).toBe('paste …');
+    expect(ledger.redactBound(text, 31)).toBe('paste <secret:stripe/live key>…');
+    expect(ledger.redactBound(text, 36)).toBe('paste <secret:stripe/live key> here…');
+    for (let max = 7; max <= 40; max += 1) {
+      const capped = ledger.redactBound(text, max);
+      expect(capped.length).toBeLessThanOrEqual(max);
+      expect(ledger.redact(capped)).toBe(capped);
+    }
+  });
+});
+
 describe('redactFragments', () => {
   const SECRET = 'cut-secret-Kq7ZrT2mWx9pLd4sNv8bHc3jFg6yQa1eUo5iRk0tYw2zXn7uM';
 

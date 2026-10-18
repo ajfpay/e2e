@@ -168,6 +168,8 @@ export interface ReportStep {
   kind: StepRecord['kind'];
   api: string;
   label: string;
+  /** An agent step's instruction as written, when the label fills its params in. */
+  instruction?: string | undefined;
   source: ReportSource;
   status: StepRecord['status'];
   startedAt: string;
