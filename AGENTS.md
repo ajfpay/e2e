@@ -94,6 +94,11 @@ suites that consume the built packages the way a user would.
   drives it through `UiAutomation`, without agent-device. The root `build`
   compiles its TypeScript; the server APK needs an Android SDK and builds
   with `build:server` only. See its README.
+- `packages/ios` - private, experimental `@e2e-dev/ios`: an engine protocol
+  server in Swift, hosted by an XCUITest bundle on the simulator
+  (`server/E2EServer.xcodeproj`), without agent-device. The root `build`
+  compiles its TypeScript; the server builds with `build:server` (Xcode).
+  See its README.
 - `packages/kernel` - the published `@e2e-dev/kernel` package: Kernel hosted
   browsers for the web engine. An official integration with a hosted service
   is one package per service, named after it (`@e2e-dev/<service>`), with the
