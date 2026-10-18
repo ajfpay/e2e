@@ -61,7 +61,7 @@ export interface ReportDocument {
 export interface CaseSample {
   /** Its attempts' time; zero for a test skipped before it started. */
   readonly durationMs: number;
-  /** Status, skip cause, attempts, and every step's kind, api, label, status, error code, and cache mode. */
+  /** Status, skip cause, attempts, and every step's kind, api, instruction (else label), status, error code, and cache mode. */
   readonly signature: string;
   /** The event phases and each step api, summed over the case, so a run total can leave out a case whose behavior changed. */
   readonly timings: Readonly<Record<string, number>>;

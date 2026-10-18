@@ -235,7 +235,8 @@ await expect(screen.getByText('Order confirmed')).toBeVisible();
 
 - Use the words on screen: `'open the Billing tab'`, not `'upgrade'`.
 - Values go in `params`, never expanded: `act('rename to {name}', { params })`.
-  The terminal and the report show the step with `{name}` filled in.
+  The terminal and the report show the step with `{name}` filled in, except
+  a `Secret` param, which stays `{name}`.
 - Do not describe mechanics the runner handles: waiting, scrolling, retries.
 - Pin every `act` outcome right after it; that check lets the cache record:
 

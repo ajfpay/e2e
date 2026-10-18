@@ -82,8 +82,8 @@ password. `locator.fill` runs no such check, since your code chose the field.
 Refer to a param as `{name}` in the instruction. The terminal, the report,
 and trace pages show the step with each `{name}` filled in. A param that
 holds a `Secret` stays `{name}`. The model and the [replay cache](/cache) get
-the instruction as written. When the two differ, the report keeps the
-instruction in the step's `instruction`.
+the instruction with `{name}` unfilled. When a param is filled in, the report
+keeps that instruction in the step's `instruction`.
 
 `onAction` runs after each action the step completes, once the screen
 settles, and before the next action. That includes actions the
