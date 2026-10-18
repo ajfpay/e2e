@@ -14,7 +14,11 @@ import XCTest
 final class EngineServer: XCTestCase {
   func testServe() throws {
     continueAfterFailure = true
-    Quiescence.disableIfAsked()
+    guard Quiescence.disableIfAsked() else {
+      print("E2E_SERVER_FAILED waitForIdle: false needs XCTest's private idle wait, which this Xcode does not have")
+      XCTFail("the idle wait could not be turned off")
+      return
+    }
     let environment = ProcessInfo.processInfo.environment
     let port = UInt16(environment["E2E_PORT"] ?? "") ?? 8765
     let server = try Server(port: port, device: Device())
@@ -22,6 +26,7 @@ final class EngineServer: XCTestCase {
     while !server.finished {
       RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
     }
+    if server.failed { XCTFail("the engine server could not listen on port \(port)") }
   }
 }
 
@@ -112,6 +117,7 @@ final class Server {
   private let queue = DispatchQueue(label: "e2e.server")
   private var session: Session?
   private(set) var finished = false
+  private(set) var failed = false
 
   init(port: UInt16, device: Device) throws {
     let parameters = NWParameters.tcp
@@ -122,9 +128,15 @@ final class Server {
   }
 
   func start() {
-    listener.stateUpdateHandler = { state in
+    listener.stateUpdateHandler = { [unowned self] state in
       if case .ready = state { print("E2E_SERVER_READY") }
-      if case .failed(let error) = state { print("E2E_SERVER_FAILED \(error)") }
+      if case .failed(let error) = state {
+        print("E2E_SERVER_FAILED \(error)")
+        DispatchQueue.main.async {
+          self.failed = true
+          self.finished = true
+        }
+      }
     }
     listener.newConnectionHandler = { [weak self] connection in
       guard let self else { return }
@@ -202,7 +214,7 @@ final class Session {
         let parts = line.split(separator: ":", maxSplits: 1)
         guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length" else { return nil }
         return Int(parts[1].trimmingCharacters(in: .whitespaces))
-      }).first else {
+      }).first, length >= 0 else {
         connection.cancel()
         return
       }
@@ -220,9 +232,14 @@ final class Session {
   }
 
   private func handle(_ message: [String: Any]) {
-    guard let method = message["method"] as? String else { return }
+    let id = message["id"].flatMap { $0 is NSNull ? nil : $0 }
+    guard let method = message["method"] as? String else {
+      // This server sends no requests, so an id here asks for an answer it cannot get.
+      if let id { send(["jsonrpc": "2.0", "id": id, "error": ["code": -32600, "message": "a request needs a string method"]]) }
+      return
+    }
     let params = message["params"] as? [String: Any] ?? [:]
-    guard let id = message["id"], !(id is NSNull) else {
+    guard let id else {
       notification(method, params)
       return
     }

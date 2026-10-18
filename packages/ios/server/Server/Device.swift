@@ -41,7 +41,6 @@ final class Device {
   /// Each observed node's frame and kind, by id; ids carry the observation's generation.
   private var nodes: [String: (frame: CGRect, type: XCUIElement.ElementType, value: String?)] = [:]
   private var generation = 0
-  private var secure: [CGRect] = []
 
   func initialize(app declared: [String: Any]?, _ operation: Operation) throws {
     bundleId = declared?["bundleId"] as? String
@@ -124,7 +123,6 @@ final class Device {
 
     let tree = node(snapshot.children.compactMap(convert))
     nodes = fresh
-    secure = secureFrames
     let size = snapshot.frame.size
     var result: [String: Any] = [
       "root": tree.merging(["rect": ["x": 0, "y": 0, "width": size.width, "height": size.height]]) { $1 },
@@ -133,7 +131,10 @@ final class Device {
       "location": bundleId ?? "",
     ]
     if pixels {
-      let image = masked(XCUIScreen.main.screenshot().image, secureFrames)
+      let capture = XCUIScreen.main.screenshot().image
+      // A field that appeared or moved during the capture is masked too.
+      for frame in try self.secureFrames() where !secureFrames.contains(frame) { secureFrames.append(frame) }
+      let image = masked(capture, secureFrames)
       if let data = image.pngData() {
         result["pixels"] = [
           "data": data.base64EncodedString(), "mediaType": "image/png",
@@ -178,7 +179,14 @@ final class Device {
         throw EngineFailure.notActionable("node \(id) does not take text")
       }
       coordinate(center, app).tap()
-      let existing = node.type == .secureTextField ? 0 : (node.value?.count ?? 0)
+      if node.type == .secureTextField {
+        // iOS empties a secure field on the first keystroke after it takes
+        // focus, so typing replaces it; a clear types one character and
+        // deletes it.
+        app.typeText(kind == "fill" ? action["value"] as? String ?? "" : "x" + XCUIKeyboardKey.delete.rawValue)
+        return
+      }
+      let existing = node.value?.count ?? 0
       if existing > 0 { app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing)) }
       if kind == "fill" { app.typeText(action["value"] as? String ?? "") }
     case "press":
@@ -216,7 +224,15 @@ final class Device {
   func type(_ text: String, replace: Bool, _ operation: Operation) throws {
     try operation.check()
     let app = try requireApp()
-    if replace { throw EngineFailure.unsupported("the ios engine cannot clear the focused field without a node") }
+    if replace {
+      let focused = app.descendants(matching: .any).element(matching: NSPredicate(format: "hasKeyboardFocus == true"))
+      guard focused.exists else { throw EngineFailure.notActionable("nothing that takes text has focus") }
+      if focused.elementType == .secureTextField {
+        app.typeText("x" + XCUIKeyboardKey.delete.rawValue)
+      } else if let value = focused.value as? String, !value.isEmpty, value != focused.placeholderValue {
+        app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
+      }
+    }
     app.typeText(text)
   }
 
@@ -254,16 +270,32 @@ final class Device {
     app.activate()
   }
 
+  /// A screenshot with every secure field painted over: found from a fresh
+  /// snapshot before and after the capture, so a field that appeared or
+  /// moved meanwhile is masked too.
   func screenshotBase64() throws -> String {
-    // The newest observation's secure frames; a fresh tree when there is none yet.
-    if nodes.isEmpty { _ = try observe(pixels: false) }
-    guard let data = masked(XCUIScreen.main.screenshot().image, secure).pngData() else {
+    let before = try secureFrames()
+    let image = XCUIScreen.main.screenshot().image
+    let after = try secureFrames()
+    guard let data = masked(image, before + after.filter { !before.contains($0) }).pngData() else {
       throw EngineFailure.invalidState("the screen could not be captured")
     }
     return data.base64EncodedString()
   }
 
   // MARK: helpers
+
+  /// The frames of every secure field in a fresh snapshot of the app.
+  private func secureFrames() throws -> [CGRect] {
+    guard let app else { return [] }
+    var frames: [CGRect] = []
+    func walk(_ node: XCUIElementSnapshot) {
+      if node.elementType == .secureTextField { frames.append(node.frame) }
+      node.children.forEach(walk)
+    }
+    walk(try app.snapshot())
+    return frames
+  }
 
   /// Whether a field holds the keyboard: XCTest's snapshot knows, behind a
   /// property it does not publish, so it is read only where it exists.

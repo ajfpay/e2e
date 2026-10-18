@@ -2,8 +2,8 @@
  * Engine-level latency of the Swift iOS engine against `mobile()` on
  * agent-device: the same calls through the engine contract, on the same
  * simulator (`E2E_IOS_UDID`) and the same screens of the mobile benchmark
- * app (`dev.e2e.benchmark`, installed). Prints a table of medians and p95s
- * and writes the samples to `bench/results.json`.
+ * app (`dev.e2e.benchmark`, installed). Prints a table of medians and
+ * writes the samples to `bench/results.json`.
  *
  *   E2E_IOS_UDID=<udid> node bench/bench.ts [--rounds 20]
  */
@@ -82,14 +82,17 @@ async function measure(label: string, engine: EngineHandle): Promise<Samples> {
   let initialized = false;
   let attempted = false;
   try {
-    await record('prepare + init (cold)', async () => {
+    // Cold start is timed but not tolerated: nothing after it can run on an
+    // engine that did not start.
+    samples['prepare + init (cold)'] = [];
+    samples['prepare + init (cold)'].push(await time(async () => {
       // `finish` releases a `prepare` that threw part-way too.
       prepared = engine.prepare !== undefined;
       const result = await engine.prepare?.({ runId: 'bench', targetName: 'ios', projectRoot: process.cwd(), app: { bundleId: APP }, slots: 1, env, headed: false, signal, log });
       Object.assign(env, result?.env ?? {});
       initialized = true;
       await engine.init!({ runId: 'bench', targetName: 'ios', projectRoot: process.cwd(), app: { bundleId: APP }, env, headed: false, workerSlot: 0, signal, log });
-    });
+    }));
     attempted = true;
     await engine.startAttempt!({
       attemptId: 'bench-1',
@@ -181,9 +184,20 @@ const percentile = (values: readonly number[], fraction: number): number => {
 const results: Record<string, Samples> = {};
 const udid = process.env['E2E_IOS_UDID'];
 if (udid === undefined) throw new Error('set E2E_IOS_UDID to the simulator to measure on');
-results['agent-device'] = await measure('agent-device', mobile({ platform: 'ios', device: udid, session: 'e2e-ios-bench', transition: 1_500 }));
-results['direct'] = await measure('direct', ios({ udid }));
-results['direct, no idle wait'] = await measure('direct, no idle wait', ios({ udid, waitForIdle: false }));
+const factories: Record<string, () => EngineHandle> = {
+  'agent-device': () => mobile({ platform: 'ios', device: udid, session: 'e2e-ios-bench', transition: 1_500 }),
+  direct: () => ios({ udid }),
+  'direct, no idle wait': () => ios({ udid, waitForIdle: false }),
+};
+// One engine that fails to run still leaves the others' samples.
+for (const [label, engine] of Object.entries(factories)) {
+  try {
+    results[label] = await measure(label, engine());
+  } catch (cause) {
+    process.stderr.write(`[${label}] failed: ${String(cause)}\n`);
+    process.exitCode = 1;
+  }
+}
 writeFileSync(path.join(import.meta.dirname, 'results.json'), `${JSON.stringify(results, null, 2)}\n`);
 
 const engines = Object.keys(results);

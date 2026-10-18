@@ -82,6 +82,8 @@ function freePort(): Promise<number> {
 
 /** Starts the server's UI test and resolves once it listens. */
 function startServer(udid: string, port: number, waitForIdle: boolean, signal: AbortSignal): Promise<{ process: ChildProcess; output: () => string }> {
+  // xcodebuild hands the runner every `TEST_RUNNER_`-prefixed variable with
+  // the prefix removed: the server reads `E2E_PORT` and `E2E_WAIT_FOR_IDLE`.
   const child = spawn(
     'xcodebuild',
     ['test-without-building', '-xctestrun', xctestrun(), '-destination', `id=${udid}`, '-only-testing:E2EServer/EngineServer/testServe'],
@@ -90,6 +92,11 @@ function startServer(udid: string, port: number, waitForIdle: boolean, signal: A
   let output = '';
   const tail = (): string => output.trim().slice(-2048);
   return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      child.kill();
+      reject(new InfrastructureError('ENGINE_FAILURE', 'opening the simulator was abandoned'));
+      return;
+    }
     const fail = (reason: string): void => {
       clearTimeout(timer);
       signal.removeEventListener('abort', abandon);
@@ -109,6 +116,7 @@ function startServer(udid: string, port: number, waitForIdle: boolean, signal: A
     };
     child.stdout.on('data', read);
     child.stderr.on('data', read);
+    child.once('error', (cause) => fail(`xcodebuild could not start: ${cause.message}`));
     child.once('exit', () => fail('the engine server exited before it was ready'));
   });
 }
