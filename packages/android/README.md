@@ -61,11 +61,11 @@ The deterministic suite (`e2e.android.config.ts`, 42 tests, one worker):
 | flows-lists | 110.1s | 72.8s | 1.5x |
 | login-form | 28.7s | 8.6s | 3.3x |
 | smoke | 3.8s | 1.4s | 2.6x |
-| **total** | **321s** | **132s** | **2.4x** |
+| **total** | **321s** | **137s** | **2.3x** |
 
-agent-device passes all 42; the direct engine passes 40. The two it fails
-assert agent-device's narrower capability set: it accepts `scrollIntoView`,
-`Control+a`, and `Escape`, which those tests expect refused.
+Both engines pass all 42. The direct engine declares the same device
+surface as the mobile engine: `press` takes Enter, Space, or one character,
+the keys a soft keyboard has, and refuses modifiers and other named keys.
 
 Engine calls (`bench/bench.ts --rounds 20`, nearest-rank p50; init is one
 cold sample, restart three, gestures and screenshots five, typing ten, the

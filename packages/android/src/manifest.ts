@@ -27,6 +27,6 @@ export const MANIFEST = {
     'lifecycle/startAttempt',
     'lifecycle/endAttempt',
   ],
-  actions: ['tap', 'doubleTap', 'longPress', 'fill', 'clear', 'press', 'check', 'uncheck', 'focus', 'scrollIntoView', 'dragTo', 'swipe'],
+  actions: ['tap', 'doubleTap', 'longPress', 'fill', 'clear', 'press', 'check', 'uncheck', 'focus', 'dragTo', 'swipe'],
   pointerActions: ['tap', 'doubleTap', 'longPress', 'dragTo', 'swipe', 'swipeTo'],
 } satisfies EngineManifest;

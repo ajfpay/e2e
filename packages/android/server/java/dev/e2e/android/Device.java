@@ -26,7 +26,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -361,9 +360,6 @@ final class Device {
         }
         press(action.getString("key"), operation);
         break;
-      case "scrollIntoView":
-        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        break;
       case "swipe":
         swipe(bounds, action.getString("direction"), action.optString("momentum", "slow"), operation);
         break;
@@ -455,68 +451,30 @@ final class Device {
   }
 
   /**
-   * Presses one key of the contract grammar: modifiers joined by `+`, then
-   * the key, which may itself be `+` (`+`, `Shift++`). A printable key with
-   * modifiers is sent as its own key code holding them, so `Control+a`
-   * selects all instead of typing `a`.
+   * Presses one key of the contract grammar the way the soft keyboard can:
+   * Enter, Space, or one character. A device's keyboard holds no modifier
+   * and has no Escape or arrow keys, so those are refused, as the mobile
+   * engine refuses them, instead of being injected as hardware keys a person
+   * could not press.
    */
   void press(String key, Operation operation) throws Exception {
     checkCancelled(operation);
-    String name;
-    String[] modifiers;
-    if (key.equals("+")) {
-      name = "+";
-      modifiers = new String[0];
-    } else if (key.endsWith("++")) {
-      name = "+";
-      modifiers = key.substring(0, key.length() - 2).split("\\+");
-    } else {
-      String[] parts = key.split("\\+");
-      if (parts.length == 0) throw EngineException.unsupported("key " + key + " cannot be sent");
-      name = parts[parts.length - 1];
-      modifiers = Arrays.copyOf(parts, parts.length - 1);
+    int separator = key.length() > 1 ? key.lastIndexOf('+', key.length() - 2) : -1;
+    if (separator > 0) {
+      throw EngineException.unsupported("the soft keyboard cannot hold " + key.substring(0, separator) + " on a device surface; press the key alone");
     }
-    int meta = 0;
-    for (String modifier : modifiers) {
-      switch (modifier) {
-        case "Shift":
-          meta |= KeyEvent.META_SHIFT_ON | KeyEvent.META_SHIFT_LEFT_ON;
-          break;
-        case "Control":
-        case "ControlOrMeta":
-          meta |= KeyEvent.META_CTRL_ON | KeyEvent.META_CTRL_LEFT_ON;
-          break;
-        case "Alt":
-          meta |= KeyEvent.META_ALT_ON | KeyEvent.META_ALT_LEFT_ON;
-          break;
-        case "Meta":
-          meta |= KeyEvent.META_META_ON | KeyEvent.META_META_LEFT_ON;
-          break;
-        default:
-          throw EngineException.unsupported("unknown modifier " + modifier + " in " + key);
-      }
+    if (key.equals("Enter")) {
+      pressCode(KeyEvent.KEYCODE_ENTER);
+      return;
     }
-    int code = keyCode(name);
-    if (code == KeyEvent.KEYCODE_UNKNOWN) {
-      KeyEvent[] events = name.codePointCount(0, name.length()) == 1
-          ? KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(name.toCharArray())
-          : null;
-      if (events == null) throw EngineException.unsupported("key " + key + " cannot be sent");
-      if (meta == 0) {
-        for (KeyEvent event : events) inject(KeyEvent.changeTimeRepeat(event, SystemClock.uptimeMillis(), 0));
-        return;
-      }
-      for (KeyEvent event : events) {
-        if (event.getAction() != KeyEvent.ACTION_DOWN || KeyEvent.isModifierKey(event.getKeyCode())) continue;
-        code = event.getKeyCode();
-        meta |= event.getMetaState();
-        break;
-      }
-      if (code == KeyEvent.KEYCODE_UNKNOWN) throw EngineException.unsupported("key " + key + " cannot be sent");
+    String text = key.equals("Space") ? " " : key;
+    KeyEvent[] events = text.codePointCount(0, text.length()) == 1
+        ? KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
+        : null;
+    if (events == null) {
+      throw EngineException.unsupported("the soft keyboard cannot press " + key + " on a device surface; only Enter, Space, and single characters reach the soft keyboard");
     }
-    long now = SystemClock.uptimeMillis();
-    inject(new KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD));
-    inject(new KeyEvent(now, SystemClock.uptimeMillis(), KeyEvent.ACTION_UP, code, 0, meta, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD));
+    for (KeyEvent event : events) inject(KeyEvent.changeTimeRepeat(event, SystemClock.uptimeMillis(), 0));
   }
 
   void dismissKeyboard() throws Exception {
@@ -745,28 +703,7 @@ final class Device {
     }
   }
 
-  private static int keyCode(String name) {
-    switch (name) {
-      case "Enter": return KeyEvent.KEYCODE_ENTER;
-      case "Escape": return KeyEvent.KEYCODE_ESCAPE;
-      case "Tab": return KeyEvent.KEYCODE_TAB;
-      case "Backspace": return KeyEvent.KEYCODE_DEL;
-      case "Delete": return KeyEvent.KEYCODE_FORWARD_DEL;
-      case "ArrowUp": return KeyEvent.KEYCODE_DPAD_UP;
-      case "ArrowDown": return KeyEvent.KEYCODE_DPAD_DOWN;
-      case "ArrowLeft": return KeyEvent.KEYCODE_DPAD_LEFT;
-      case "ArrowRight": return KeyEvent.KEYCODE_DPAD_RIGHT;
-      case "Home": return KeyEvent.KEYCODE_MOVE_HOME;
-      case "End": return KeyEvent.KEYCODE_MOVE_END;
-      case "PageUp": return KeyEvent.KEYCODE_PAGE_UP;
-      case "PageDown": return KeyEvent.KEYCODE_PAGE_DOWN;
-      case "Insert": return KeyEvent.KEYCODE_INSERT;
-      case "Space": return KeyEvent.KEYCODE_SPACE;
-      default:
-        if (name.matches("F([1-9]|1[0-2])")) return KeyEvent.KEYCODE_F1 + Integer.parseInt(name.substring(1)) - 1;
-        return KeyEvent.KEYCODE_UNKNOWN;
-    }
-  }
+
 
   private Point displaySize() {
     Point size = new Point();

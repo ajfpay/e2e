@@ -8,8 +8,7 @@ import base, { android as agentDevice } from './e2e.config.ts';
  * protocol instead of through agent-device. `BENCH_ENGINE=agent-device`
  * runs the same selection on the default engine, for comparing the two.
  * The suites that reach `device` beyond `back()` are left out: the direct
- * engine has no such controls yet. Two `refusals` tests fail on it by
- * design: they assert agent-device's narrower capability set.
+ * engine has no such controls yet.
  */
 export default {
   ...base,
