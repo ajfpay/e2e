@@ -431,7 +431,7 @@ describe("trace cache: the recorded end wait leaves out the executor's last turn
   /** The margin the runner adds to a measured end wait. */
   const END_WAIT_MARGIN_MS = 10_000;
   /** The executor's turn after it saw the marker, before its verdict. */
-  const THINK_MS = 4_000;
+  const THINK_MS = 8_000;
 
   it('measures the wait to the look that showed the end state, not to the verdict', async () => {
     const app = await startFixtureApp();

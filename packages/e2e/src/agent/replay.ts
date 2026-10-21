@@ -400,8 +400,8 @@ interface EndWait {
  * recorded delta, `cache/anchors.ts`) must be true of one look, or the
  * replay must not pass on its own. The deadline is the later of `waitMs`
  * after the last action and `minWaitMs` after the first look, cut short so
- * `reserveMs` of the step clock stays, except for the quick looks of a
- * re-render. A surface that cannot be observed at all is a mismatch too;
+ * `reserveMs` of the step clock stays. The quick looks of a re-render are
+ * always taken. A surface that cannot be observed at all is a mismatch too;
  * only runtime hard stops propagate.
  */
 export async function verifyEndState(
@@ -410,7 +410,7 @@ export async function verifyEndState(
   options: EndWait,
 ): Promise<boolean> {
   const startedMs = Date.now();
-  const wantedUntil = Math.max(options.sinceMs + options.waitMs, startedMs + options.minWaitMs);
+  const wantedUntil = Math.max(options.sinceMs + options.waitMs, startedMs + Math.max(options.minWaitMs, END_WAIT_SETTLE_MS));
   const allowedUntil = startedMs + Math.max(END_WAIT_SETTLE_MS, host.remainingMs() - options.reserveMs);
   const deadline = Math.min(wantedUntil, allowedUntil);
   let slowestLookMs = 0;
@@ -435,8 +435,8 @@ export async function verifyEndState(
 
 /** The first delays between looks while a replay waits for the recorded end state. */
 const END_WAIT_DELAYS_MS = [100, 300, 600] as const;
-/** Those first looks' span, which no step clock reserve cuts: a re-render after the last action. */
-const END_WAIT_SETTLE_MS = 1_000;
+/** Those first looks' span, always taken: a re-render after the last action. */
+const END_WAIT_SETTLE_MS = END_WAIT_DELAYS_MS.reduce((total, delay) => total + delay, 0);
 /** The delay between looks after those. */
 const END_WAIT_POLL_MS = 1_000;
 

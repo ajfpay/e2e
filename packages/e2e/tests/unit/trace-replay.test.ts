@@ -195,6 +195,10 @@ describe('verifyEndState', () => {
     await expect(verifyAnchors(savedAfter(300, 15_000), [savedAnchor])).resolves.toBe(true);
   });
 
+  it('still takes the quick looks of a re-render when a slow route used up the recorded wait', async () => {
+    await expect(verifyAnchors(savedAfter(300, 120_000), [savedAnchor], 10_718, Date.now() - 11_000)).resolves.toBe(true);
+  });
+
   it('counts its shortest wait from the first look, so a slow route does not shorten it', async () => {
     const startedMs = Date.now();
     const options = { sinceMs: startedMs - 10_000, waitMs: 11_000, minWaitMs: 15_000, reserveMs: 2_000 };
