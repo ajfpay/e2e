@@ -1,0 +1,53 @@
+name: docs-preview
+
+# Requests a preview of the docs site for a pull request that changes docs/.
+# The preview link is posted on the PR once it is up. A workflow-level
+# `paths:` filter is fine here: no ruleset requires this workflow.
+#
+# Maintainers only: a preview is requested for a branch of this repository
+# (pushing one takes write access) opened by an owner, org member, or
+# collaborator. Fork PRs never request one, and `pull_request` gives them no
+# secrets. Never move this workflow to `pull_request_target`.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs-preview.yml'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    environment: docs-preview
+    steps:
+      - name: Token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DOCS_PREVIEW_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DOCS_PREVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ secrets.DOCS_PREVIEW_REPOSITORY }}
+          permission-contents: write
+
+      - name: Request the preview
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          TARGET: ${{ github.repository_owner }}/${{ secrets.DOCS_PREVIEW_REPOSITORY }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api --method POST "repos/$TARGET/dispatches" --silent \
+            -f event_type=docs-preview \
+            -f "client_payload[pr]=$PR" \
+            -f "client_payload[sha]=$SHA"
