@@ -21,6 +21,7 @@ import { extracted, fakeCalls, installFakeModel, type FakeCall } from '../helper
 import { startFixtureApp, type FixtureApp } from '../helpers/fixture-app.ts';
 import { createFakeEngine } from '../helpers/fake-engine.ts';
 import { assertValidReport } from '../helpers/report-schema.ts';
+import { commitFiles, initRepo, runGit } from '../helpers/git-repo.ts';
 import { createProject, type FixtureProject } from '../helpers/run-project.ts';
 import { web } from '@e2e-dev/web';
 import { z } from 'zod';
@@ -211,6 +212,43 @@ describe('e2e explore', () => {
     // The written report is the outcome's document.
     const written = JSON.parse(readFileSync(path.join(project.dir, '.e2e', 'report.json'), 'utf8')) as typeof outcome.report;
     expect(written.run.explore).toEqual(record);
+  }, 120_000);
+
+  it('plans from the change since --changed-since in every call\'s context, defaulting the goal to it, and records the change', async () => {
+    const changed = createProject({ 'README.md': 'app\n' });
+    try {
+      initRepo(changed.dir);
+      commitFiles(changed.dir, {}, 'project');
+      runGit(changed.dir, 'branch', '--quiet', 'base');
+      // Past the report's 8192-character step label: the change must never become one.
+      const large = Array.from({ length: 20 }, (_, index) => [`src/page-${index}.tsx`, `${'<p>row</p>\n'.repeat(60)}`]);
+      commitFiles(changed.dir, { 'src/counter.tsx': '<output>{count}</output>\n', ...Object.fromEntries(large) }, 'Show the counter value');
+      const planCalls: FakeCall[] = [];
+      const model = installExploreModel({
+        plan: (call) => {
+          planCalls.push(call);
+          return planCalls.length === 1
+            ? { decision: 'step', title: 'Counter', instruction: 'Look at the counter' }
+            : { decision: 'finish', summary: 'The changed counter renders.' };
+        },
+        loop: () => [{ toolName: 'complete_step', input: { status: 'passed', summary: 'Looked' } }],
+      });
+      const outcome = await runExplore(changed, app, model, { goal: undefined, changedSince: 'base' });
+      expect(planCalls[0]!.instruction).toContain('Goal: Explore what this change affects and find bugs in it');
+      expect(planCalls[0]!.instruction).toContain('Plan from the code change between <change> and </change> in the context:');
+      expect(planCalls[0]!.instruction).not.toContain('<output>{count}</output>');
+      // The planner and the explorer both read the change in their trusted context.
+      expect(planCalls[0]!.system).toContain('- Show the counter value');
+      expect(planCalls[0]!.system).toContain('src/counter.tsx (+1 -0; full patch below)\n@@ -0,0 +1 @@\n+<output>{count}</output>');
+      expect(loopCalls.at(-1)!.system).toContain('src/counter.tsx (+1 -0; full patch below)');
+      expect(outcome.report.run.changes).toEqual({ base: runGit(changed.dir, 'rev-parse', 'base'), files: 21 });
+      const labels = outcome.report.run.results[0]!.attempts[0]!.steps.map((step) => step.label);
+      expect(labels.every((label) => !label.includes('<output>{count}</output>'))).toBe(true);
+      assertValidReport(outcome.report);
+      await expect(runExplore(changed, app, model, { changedSince: 'no-such-ref' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
+    } finally {
+      changed.cleanup();
+    }
   }, 120_000);
 
   it('passes with warnings only', async () => {

@@ -23,11 +23,14 @@ import { run, type RunOutcome } from '../run/runner.ts';
 import { registerStaticSecrets, staticSecretLedger } from '../run/secrecy.ts';
 import type { AgentConfig, BuiltinReporter, E2EConfig, RecordingMode } from '../types.ts';
 import { createExploreBody } from './body.ts';
+import { changeContext, readExploreChange, type ExploreChange } from './change.ts';
 import { explorerAgent, withFindingTool } from './executor.ts';
 import { signedInContext, type PlanAccount } from './plan.ts';
 import { ExploreState } from './state.ts';
 
 const DEFAULT_GOAL = 'Explore the app and find bugs';
+/** The goal with `--changed-since` and none given: the change is the scope. */
+const DEFAULT_CHANGE_GOAL = 'Explore what this change affects and find bugs in it';
 /** Exploration steps per run: breadth first, and diminishing returns come fast. */
 export const STEP_BOUNDS = { min: 1, max: 12, default: 8 } as const;
 /** The run's wall clock in milliseconds: three to fifteen minutes. */
@@ -64,6 +67,12 @@ export interface ExploreOptions {
    * `COLLECTION_ERROR` before any process starts.
    */
   readonly session?: string | undefined;
+  /**
+   * A git ref, such as `origin/main`, to explore the change since: the
+   * planner reads what differs from the merge base of the ref and HEAD, and
+   * plans its charters from it. With no `goal`, the goal is the change.
+   */
+  readonly changedSince?: string | undefined;
   readonly maxSteps?: number | undefined;
   readonly timeoutMs?: number | undefined;
   readonly headed?: boolean | undefined;
@@ -119,7 +128,6 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
   const env = options.env ?? process.env;
   const earlyNotices: string[] = [];
   const notice = options.notice ?? ((message: string) => void earlyNotices.push(message));
-  const goal = resolveGoal(options.goal);
   const budgets = {
     maxSteps: resolveBounded(options.maxSteps, STEP_BOUNDS, 'maxSteps'),
     timeoutMs: resolveBounded(options.timeoutMs, TIMEOUT_BOUNDS, 'timeout'),
@@ -136,6 +144,8 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
   const { raw, projectRoot, resolved } = await (options.processOutput === undefined
     ? loadConfig()
     : options.processOutput.withholdDuring(loadConfig));
+  const change = await exploreChange(options.changedSince, projectRoot, options.interruptSignal, notice);
+  const goal = resolveGoal(options.goal, change?.brief === undefined ? DEFAULT_GOAL : DEFAULT_CHANGE_GOAL);
   const target = pickTarget(resolved.targets, options.target, notice);
   const accounts = credentialAccounts(resolved.credentials);
   // An exploration runs as exactly one agent: the one named, else `default`.
@@ -164,10 +174,16 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
     env,
     tests: {
       file: EXPLORE_FILE,
-      registration: exploreRegistration(state, { openApp: target.app.base !== undefined || launchesPinnedApp(target), accounts, session: options.session }),
+      registration: exploreRegistration(state, {
+        openApp: target.app.base !== undefined || launchesPinnedApp(target),
+        accounts,
+        session: options.session,
+        change: change?.brief,
+      }),
       agents: explorerAgents,
       explore: state,
       notices: earlyNotices,
+      ...(change === undefined ? {} : { changes: change.report }),
     },
     targetIds: [target.name],
     headed: options.headed,
@@ -193,9 +209,26 @@ async function loadRawConfig(options: ExploreOptions, cwd: string): Promise<{ ra
   return { raw: await loadConfigModule(discovered.configPath), projectRoot: discovered.projectRoot };
 }
 
-function resolveGoal(goal: string | undefined): string {
+/**
+ * The change `changedSince` names, read before anything starts, so a ref git
+ * cannot measure from fails as a bad flag does. No change since the base is
+ * a notice, and the exploration runs on its goal alone.
+ */
+async function exploreChange(
+  changedSince: string | undefined,
+  projectRoot: string,
+  signal: AbortSignal | undefined,
+  notice: (message: string) => void,
+): Promise<ExploreChange | undefined> {
+  if (changedSince === undefined) return undefined;
+  const change = await readExploreChange({ cwd: projectRoot, changedSince, signal: signal ?? new AbortController().signal });
+  if (change.brief === undefined) notice(`no files changed since ${changedSince}; exploring the goal without a change`);
+  return change;
+}
+
+function resolveGoal(goal: string | undefined, fallback: string): string {
   const trimmed = goal?.trim() ?? '';
-  if (trimmed === '') return DEFAULT_GOAL;
+  if (trimmed === '') return fallback;
   if (trimmed.length > MAX_GOAL_CHARS) {
     throw new ConfigurationError('INVALID_CONFIG', `the goal must be at most ${MAX_GOAL_CHARS} characters, got ${trimmed.length}`);
   }
@@ -292,10 +325,14 @@ function credentialAccounts(credentials: ReadonlyMap<string, ResolvedCredential>
  */
 function exploreRegistration(
   state: ExploreState,
-  start: { readonly openApp: boolean; readonly accounts: readonly PlanAccount[]; readonly session: string | undefined },
+  start: { readonly openApp: boolean; readonly accounts: readonly PlanAccount[]; readonly session: string | undefined; readonly change: string | undefined },
 ): ModuleRegistration {
   const title = state.goal;
-  const { session } = start;
+  const { session, change, ...body } = start;
+  // The change rides in the trusted context, never in a step's label: the
+  // planner reads it, the explorer judges against it, and the report and
+  // its artifacts never copy it.
+  const context = [...(session === undefined ? [] : [signedInContext(session)]), ...(change === undefined ? [] : [changeContext(change)])];
   const test: RegisteredTest = {
     kind: 'test',
     title,
@@ -305,12 +342,12 @@ function exploreRegistration(
       timeout: state.budgets.timeoutMs + TIMEOUT_GRACE_MS,
       retries: 0,
       // The goal reaches every prompt as the test's title (`Test: <goal>`).
-      ...(session === undefined ? {} : { agentContext: signedInContext(session) }),
+      ...(context.length === 0 ? {} : { agentContext: context.join('\n\n') }),
       ...(session === undefined ? {} : { session }),
     },
     sessions: [],
     tags: [],
-    fn: createExploreBody({ state, stepTimeoutMs: STEP_TIMEOUT_MS, ...start }),
+    fn: createExploreBody({ state, stepTimeoutMs: STEP_TIMEOUT_MS, ...body, session, change: change !== undefined }),
     fixtures: [],
     group: undefined,
     mode: 'normal',

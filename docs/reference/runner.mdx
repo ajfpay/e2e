@@ -142,6 +142,7 @@ console.log(result.status, result.explore.ended, result.explore.findings.length)
 | `target` | `'web'` | `string` | the first configured target |
 | `agent` | `'smart'` | `string` | `agents.default` |
 | `session` | `'loggedIn'` | `string` | - |
+| `changedSince` | `'origin/main'` | `string` | - |
 | `maxSteps` | `4` | `number` | `8` |
 | `timeoutMs` | `300_000` | `number` | `600_000` |
 | `interruptSignal` | `controller.signal` | `AbortSignal` | - |
@@ -150,6 +151,8 @@ console.log(result.status, result.explore.ended, result.explore.findings.length)
 - `goal` is at most 2,000 characters.
 - `session` names a session a [setup test](/authentication) saves. That setup
   runs first, and the exploration starts from it, as `--session` does.
+- `changedSince` explores the change since that ref, as
+  [`--changed-since`](/reference/cli#e2e-explore) does.
 - `maxSteps` is from 1 to 12. `timeoutMs` is from `180000` to `900000`.
 - `onEvent` receives the same events as for `run`, plus an `explore` event
   for each planning decision, step, and finding. What `e2e explore` prints

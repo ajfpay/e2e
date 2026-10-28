@@ -250,6 +250,8 @@ export interface InMemoryTests {
    * started, for a caller with no terminal of its own to print them on.
    */
   readonly notices?: readonly string[] | undefined;
+  /** The change an exploration with `--changed-since` planned from, recorded as `run.changes`. */
+  readonly changes?: ReportChanges | undefined;
 }
 
 /** What the runner needs from an exploration: its moments as they happen, and its record at the end. */
@@ -586,7 +588,7 @@ export async function run(options: RunOptions = {}): Promise<RunOutcome> {
   let rerunCollection: RerunCollection = { testIds: new Set(), uncollectedFiles: new Set() };
   // What each test filter decided, once they ran, and the change they judged.
   let filterReport: readonly ReportFilter[] = [];
-  let changesReport: ReportChanges | undefined;
+  let changesReport: ReportChanges | undefined = options.tests?.changes;
   // The results of the pairs that never run (skipped, filtered by a flag, or
   // left out by a filter), from selection until the scheduler starts and
   // records them with the rest. A run that stops in between records them

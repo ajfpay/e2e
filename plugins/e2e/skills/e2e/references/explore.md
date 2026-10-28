@@ -13,6 +13,7 @@ npx e2e explore 'Explore checkout like a first-time buyer and report anything of
 npx e2e explore --target web --max-steps 4 --headed
 npx e2e explore 'Hunt for broken forms' --video
 npx e2e explore --session admin 'Explore the admin settings'
+npx e2e explore --changed-since origin/main   # explore what the branch changed
 ```
 
 ## Contents
@@ -74,6 +75,7 @@ configured secrets are redacted (topic `writing-tests`).
 | `--target <id>` | first configured target | The one target to explore. |
 | `--agent <name>` | `default` | Build the explorer from another configured agent (`agents.<name>`). |
 | `--session <name>` | none | Run the setup that saves this session, then explore with it restored. |
+| `--changed-since <ref>` | none | Explore the change since the merge base of the ref and HEAD: the planner reads the commit messages and their diff (a file no commit changed by name only) and plans charters for the screens the change can affect. Default goal becomes `Explore what this change affects and find bugs in it`. Needs the base in the checkout (`fetch-depth: 0` in CI). `run.changes` records it. |
 | `--max-steps <n>` | 8 (1 to 12) | Exploration steps at most. |
 | `--timeout <ms>` | 600000 (180000 to 900000) | Wall clock; the last minute is for the assessment. |
 | `--headed`, `--reporter`, `--output`, `--debug`, `--ai-trace`, `--trace [mode]`, `--video [mode]` | as `run` | Same meaning as for `e2e run`. The exploration is one attempt, so a retry mode (`on-first-retry`, `on-all-retries`) records nothing (the run's notice says to pass `--trace on`); put the goal before a bare `--trace` or `--video`. |

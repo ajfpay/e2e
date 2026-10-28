@@ -752,7 +752,7 @@
       }
     },
     "changes": {
-      "description": "The change the run's test filters judged, by counts only, or why no filter ran. Present when filters are configured and the run passed --changed-since. base and files come together once git measured the change; skipped stands alone when no filter ran before git was asked.",
+      "description": "The change the run's test filters judged, or an e2e explore run planned from, by counts only, or why no filter ran. Present when filters are configured and the run passed --changed-since, and on an e2e explore run that passed --changed-since. base and files come together once git measured the change; skipped stands alone when no filter ran before git was asked.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
