@@ -3,14 +3,16 @@
  * each under its own agent-device session. A named `device` is a pool of one
  * and a list a pool of many; with no `device` the pool is every booted device
  * of the platform no other agent-device session holds, discovered in
- * `prepare`; a `DeviceProvider` leases one hosted device per slot instead.
- * Each is a `DeviceSource`; `prepare` binds
- * one `SlotBinding` per slot from it, warms each once per run before any
- * worker exists, and hands the bindings to the workers through the run's
- * environment. The worker that owns a slot then resumes its session in
- * `init`, and `finish` releases what the source acquired.
+ * `prepare`, or one shut-down simulator or emulator when none is booted; a
+ * `DeviceProvider` leases one hosted device per slot instead. Each is a
+ * `DeviceSource`; `prepare` binds one `SlotBinding` per slot from it, warms
+ * each once per run before any worker exists, and hands the bindings to the
+ * workers through the run's environment. The worker that owns a slot then
+ * resumes its session in `init`, and `finish` releases what the source
+ * acquired.
  */
 
+import type { AgentDeviceDevice } from 'agent-device';
 import {
   ConfigurationError,
   EngineError,
@@ -93,17 +95,68 @@ class ConfiguredDevices implements DeviceSource {
   }
 }
 
-/** A booted device as the inventory lists it, with the agent-device session that holds it, when one does. */
-interface BootedDevice {
+/** The size of screen a device has, which decides which one a run with nothing booted boots first. */
+type FormFactor = 'phone' | 'tablet';
+
+/** A device of the platform as the inventory lists it, with the agent-device session that holds it, when one does. */
+interface ListedDevice {
   readonly id: string;
   readonly name: string;
+  readonly booted: boolean;
   readonly claimedBy?: string | undefined;
+  /** Whether a run can boot it: a phone or tablet simulator or emulator, not a TV, a headset, a car or watch AVD, or a physical device. */
+  readonly bootable: boolean;
+  readonly formFactor: FormFactor;
+  readonly osVersion?: string | undefined;
+}
+
+type DeviceOrder = (a: ListedDevice, b: ListedDevice) => number;
+
+/**
+ * An AVD named for a car, watch, desktop, TV, or headset image. agent-device
+ * lists a shut-down AVD with its name alone (a TV only when the name says
+ * so), so the name is all there is to keep a phone APK off those.
+ */
+const NOT_A_PHONE_AVD = /\b(?:automotive|wear|desktop|tv|xr)\b/i;
+
+/** Compares version strings and names with their digit runs as numbers, so `26.10` follows `26.9`. */
+const numeric = new Intl.Collator('en', { numeric: true });
+
+const formFactorRank = { phone: 0, tablet: 1 } satisfies Record<FormFactor, number>;
+
+/**
+ * The preference among shut-down devices, most important first; the first
+ * rule that tells two apart decides.
+ */
+const coldPreference: readonly DeviceOrder[] = [
+  (a, b) => formFactorRank[a.formFactor] - formFactorRank[b.formFactor],
+  // Newest OS first; an empty string sorts lowest, so an unknown OS comes last.
+  (a, b) => numeric.compare(b.osVersion ?? '', a.osVersion ?? ''),
+  (a, b) => numeric.compare(a.name, b.name),
+  (a, b) => a.id.localeCompare(b.id),
+];
+
+/**
+ * The shut-down device a run with nothing booted boots, by `coldPreference`.
+ * Left to the daemon, an unscoped boot fails with AMBIGUOUS_MATCH as soon as
+ * two simulators or two AVDs rank alike, which every Xcode install has.
+ */
+function coldPick(devices: readonly ListedDevice[]): ListedDevice | undefined {
+  const candidates = devices.filter((device) => !device.booted && device.bootable);
+  return candidates.toSorted((a, b) => {
+    for (const compare of coldPreference) {
+      const order = compare(a, b);
+      if (order !== 0) return order;
+    }
+    return 0;
+  })[0];
 }
 
 /**
  * Every booted device of the platform no other agent-device session holds, as
- * many as the run has slots; with none booted, one slot the daemon fills. A
- * device held by one of this target's own slot sessions stays in the pool.
+ * many as the run has slots; with none booted, one slot bound to a shut-down
+ * simulator or emulator `coldPick` chooses, which `warm` boots. A device held
+ * by one of this target's own slot sessions stays in the pool.
  */
 class BootedDevices implements DeviceSource {
   constructor(
@@ -113,7 +166,8 @@ class BootedDevices implements DeviceSource {
   ) {}
 
   async bind(info: EnginePrepareInfo): Promise<readonly SlotBinding[]> {
-    const booted = await this.inventory(info.targetName, info.signal);
+    const listed = await this.inventory(info.targetName, info.signal);
+    const booted = listed.filter((device) => device.booted);
     const own = new Set(Array.from({ length: info.slots }, (_, slot) => this.session(info.targetName, slot)));
     const held = booted.filter((device) => device.claimedBy !== undefined && !own.has(device.claimedBy));
     const chosen = booted.filter((device) => !held.includes(device)).slice(0, info.slots);
@@ -125,35 +179,59 @@ class BootedDevices implements DeviceSource {
         { retryable: false },
       );
     }
-    if (chosen.length === 0) {
-      info.log(`no booted ${this.platform} device; agent-device boots one`);
-      return [{}];
-    }
+    if (chosen.length === 0) return [this.cold(listed, info)];
     const skipped = held.length === 0 ? '' : `, skipping ${held.length} held by another agent-device session (${heldBy})`;
     info.log(`${booted.length} booted ${this.platform} device(s)${skipped}; driving ${chosen.length}: ${chosen.map((device) => device.name).join(', ')}`);
-    return chosen.map((device) => ({ deviceId: device.id }));
+    return chosen.map((device) => ({ device: device.name, deviceId: device.id }));
   }
 
-  /** Every booted device of the platform, by stable id and name, with the session holding it, in agent-device's inventory order. */
-  private async inventory(targetName: string, signal: AbortSignal): Promise<BootedDevice[]> {
+  /**
+   * The one slot of a run with nothing booted. A simulator binds by UDID,
+   * its name kept for the label; an AVD binds by name, since its serial
+   * exists only once it runs. With
+   * nothing to boot listed, the choice stays with the daemon.
+   */
+  private cold(listed: readonly ListedDevice[], info: EnginePrepareInfo): SlotBinding {
+    const pick = coldPick(listed);
+    if (pick === undefined) {
+      info.log(`no booted ${this.platform} device and none listed to boot; agent-device boots one`);
+      return {};
+    }
+    const os = pick.osVersion === undefined ? '' : ` (${pick.osVersion})`;
+    info.log(
+      `no booted ${this.platform} device; picked ${pick.name}${os}. Name another in the target's \`device\` option, or boot one first`,
+    );
+    return this.platform === 'android' ? { device: pick.name } : { device: pick.name, deviceId: pick.id };
+  }
+
+  /** Every device of the platform, by stable id and name, with the session holding it, in agent-device's inventory order. */
+  private async inventory(targetName: string, signal: AbortSignal): Promise<ListedDevice[]> {
     const client = this.createClient(this.session(targetName, 0));
     const inventory: unknown = await runCommand('devices', () => client.devices.list({ platform: this.platform }), signal);
     if (!Array.isArray(inventory)) return [];
     return inventory
       .filter(
-        (device): device is { id: string; name?: unknown; claimedBy?: { session?: unknown } } =>
+        (device): device is Partial<AgentDeviceDevice> & { id: string } =>
           typeof device === 'object' &&
           device !== null &&
-          (device as { booted?: unknown }).booted === true &&
           (device as { platform?: unknown }).platform === this.platform &&
           typeof (device as { id?: unknown }).id === 'string',
       )
       .map((device) => {
         const session = device.claimedBy?.session;
+        const formFactor: FormFactor = device.appleOs === 'ipados' ? 'tablet' : 'phone';
         return obj({
           id: device.id,
           name: typeof device.name === 'string' ? device.name : device.id,
+          booted: device.booted === true,
           claimedBy: typeof session === 'string' ? session : undefined,
+          bootable:
+            device.kind !== 'device' &&
+            (device.target ?? 'mobile') === 'mobile' &&
+            device.appleOs !== 'visionos' &&
+            !(this.platform === 'android' && NOT_A_PHONE_AVD.test(device.id.replaceAll('_', ' '))),
+          formFactor,
+          osVersion: typeof device.osVersion === 'string' ? device.osVersion : undefined,
         });
       });
   }

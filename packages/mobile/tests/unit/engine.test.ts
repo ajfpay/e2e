@@ -349,8 +349,8 @@ describe('lifecycle', () => {
     const variable = poolVariableIn(handed, 'IOS');
     expect(handed[variable]).toBe(
       JSON.stringify([
-        { deviceId: '2BBF3F07-AF66-4F95-82AB-BF442506FC89' },
-        { deviceId: '8A2DC8D6-7B20-44FA-ADBB-47D3EAE6E8F3' },
+        { device: 'iPhone 16e', deviceId: '2BBF3F07-AF66-4F95-82AB-BF442506FC89' },
+        { device: 'iPhone 17', deviceId: '8A2DC8D6-7B20-44FA-ADBB-47D3EAE6E8F3' },
       ]),
     );
     expect(env).toEqual({});
@@ -362,7 +362,7 @@ describe('lifecycle', () => {
     expect(worker.sessions).toEqual(['e2e-ios-1']);
   });
 
-  it('with fewer slots than booted devices drives only that many; with none booted, one slot boots what agent-device picks', async () => {
+  it('with fewer slots than booted devices drives only that many; with nothing listed to boot, one slot boots what agent-device picks', async () => {
     const h = harness({ device: undefined });
     h.fake.respond('devices.list', () => [
       { platform: 'ios', id: 'A', name: 'A', booted: true },
@@ -374,13 +374,13 @@ describe('lifecycle', () => {
     expect(first?.workers).toBe(1);
     const firstEnv = first?.env ?? {};
     expect(h.fake.calls.filter((call) => call.method === 'devices.boot').map((call) => call.args)).toEqual([{ platform: 'ios', udid: 'A' }]);
-    expect(firstEnv[poolVariableIn(firstEnv, 'IOS')]).toBe(JSON.stringify([{ deviceId: 'A' }]));
+    expect(firstEnv[poolVariableIn(firstEnv, 'IOS')]).toBe(JSON.stringify([{ device: 'A', deviceId: 'A' }]));
     // The same handle prepared again, for another target, discovers afresh and hands back that target's own variable.
     h.fake.respond('devices.list', () => [{ platform: 'ios', id: 'C', name: 'C', booted: true }]);
     const second = await h.prepare({ ...info, targetName: 'ios.a', env });
     const secondEnv = second?.env ?? {};
     expect(h.fake.methods().filter((method) => method === 'devices.list')).toHaveLength(2);
-    expect(secondEnv[poolVariableIn(secondEnv, 'IOS_A')]).toBe(JSON.stringify([{ deviceId: 'C' }]));
+    expect(secondEnv[poolVariableIn(secondEnv, 'IOS_A')]).toBe(JSON.stringify([{ device: 'C', deviceId: 'C' }]));
     // Names that sanitize alike keep distinct variables.
     const third = await h.prepare({ ...info, targetName: 'ios-a', env });
     expect(Object.keys(third?.env ?? {})[0]).not.toBe(Object.keys(secondEnv)[0]);
@@ -396,6 +396,43 @@ describe('lifecycle', () => {
     // One slot bound to no device in particular: the daemon picks.
     expect(coldHanded[poolVariableIn(coldHanded, 'IOS')]).toBe(JSON.stringify([{}]));
     expect(coldEnv).toEqual({});
+  });
+
+  it('with none booted binds one shut-down simulator by UDID, an iPhone on the newest iOS first, so the boot is never ambiguous', async () => {
+    const shutDown = { platform: 'ios', kind: 'simulator', target: 'mobile', booted: false };
+    const h = harness({ device: undefined });
+    h.fake.respond('devices.list', () => [
+      { ...shutDown, id: 'OLD', name: 'iPhone 16', appleOs: 'ios', osVersion: '18.6' },
+      { ...shutDown, id: 'IPAD', name: 'iPad Pro 13-inch (M5)', appleOs: 'ipados', osVersion: '26.1' },
+      { ...shutDown, id: 'PRO', name: 'iPhone 17 Pro', appleOs: 'ios', osVersion: '26.1' },
+      { ...shutDown, id: 'BASE', name: 'iPhone 17', appleOs: 'ios', osVersion: '26.1' },
+      { ...shutDown, id: 'TV', name: 'Apple TV 4K', target: 'tv', appleOs: 'tvos', osVersion: '26.1' },
+      { ...shutDown, id: 'AVP', name: 'Apple Vision Pro', appleOs: 'visionos', osVersion: '26.1' },
+      { platform: 'ios', kind: 'device', target: 'mobile', id: 'PHONE', name: 'My iPhone', appleOs: 'ios', osVersion: '27.0', booted: false },
+    ]);
+    const lines: string[] = [];
+    const info = { runId: 'run-1', targetName: 'ios', projectRoot: PROJECT_ROOT, slots: 2, env: {}, signal: new AbortController().signal, headed: false, log: (line: string) => lines.push(line) };
+    const result = await h.prepare(info);
+    expect(result).toMatchObject({ workers: 1 });
+    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', udid: 'BASE' });
+    expect(lines.slice(0, 2)).toEqual([
+      "no booted ios device; picked iPhone 17 (26.1). Name another in the target's `device` option, or boot one first",
+      'booting iPhone 17 (BASE) (1 of 1)',
+    ]);
+    const handed = result?.env ?? {};
+    expect(handed[poolVariableIn(handed, 'IOS')]).toBe(JSON.stringify([{ device: 'iPhone 17', deviceId: 'BASE' }]));
+
+    // An AVD has no serial until it runs, so it binds by name; a car or watch image is never picked.
+    const avd = { platform: 'android', kind: 'emulator', target: 'mobile', booted: false };
+    const android = harness({ device: undefined, platform: 'android' });
+    android.fake.respond('devices.list', () => [
+      { ...avd, id: 'Automotive_1024p_landscape_API_34', name: 'Automotive_1024p_landscape_API_34' },
+      { ...avd, id: 'Wear_OS_Large_Round_API_34', name: 'Wear_OS_Large_Round_API_34' },
+      { ...avd, id: 'Pixel_9', name: 'Pixel_9' },
+      { ...avd, id: 'Pixel_10', name: 'Pixel_10' },
+    ]);
+    await android.prepare({ ...info, targetName: 'android', log: () => undefined });
+    expect(android.fake.lastArgs('devices.boot')).toEqual({ platform: 'android', device: 'Pixel_9' });
   });
 
   it('skips a booted device another agent-device session holds, keeps one its own slot session holds, and fails when every booted one is held', async () => {
@@ -450,7 +487,7 @@ describe('lifecycle', () => {
     expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'android', serial: 'emulator-5554' });
     const handed = result?.env ?? {};
     const variable = poolVariableIn(handed, 'ANDROID');
-    expect(handed[variable]).toBe(JSON.stringify([{ deviceId: 'emulator-5554' }]));
+    expect(handed[variable]).toBe(JSON.stringify([{ device: 'test', deviceId: 'emulator-5554' }]));
     const worker = harness({ device: undefined, platform: 'android' });
     await boot(worker, 'android', 0, { [variable]: handed[variable] });
     expect(worker.fake.lastArgs('devices.boot')).toEqual({ platform: 'android', serial: 'emulator-5554' });

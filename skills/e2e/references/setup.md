@@ -351,8 +351,9 @@ export default {
   'http://localhost:8081/status'` starts it.
 - One worker per device. No `device`: every booted simulator or emulator of
   the platform, and every connected phone, is the pool, up to `workers`,
-  minus devices another agent-device session holds (none booted: agent-device boots
-  one; all held: `prepare` fails); one `device`: one worker whatever `workers` says; a list (`device:
+  minus devices another agent-device session holds (none booted: one
+  shut-down simulator or emulator boots, an iPhone on the newest iOS first or
+  the first phone AVD by name, named in the log; all held: `prepare` fails); one `device`: one worker whatever `workers` says; a list (`device:
   ['iPhone 17', 'iPhone 17 Pro']`): an explicit pool. Devices boot in
   `prepare`, before the run's clock. Two sessions on one device fight over
   it: for parallel MCP sessions or bug-bash explorers, declare one target per

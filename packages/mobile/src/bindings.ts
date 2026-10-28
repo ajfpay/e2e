@@ -36,7 +36,7 @@ export type DeviceConnection = Pick<SlotBinding, 'daemon' | 'client'>;
 
 /** What one worker slot drives; `{}` leaves every choice to the local daemon. */
 export interface SlotBinding {
-  /** Device to select by name; absent, `deviceId` selects one, or the daemon picks a booted one. */
+  /** Device name: what selects the device without a `deviceId`, and only its label with one. Both absent, the daemon picks a booted one. */
   readonly device?: string | undefined;
   /** Device to select by the id agent-device lists it under: a simulator UDID or an Android serial. */
   readonly deviceId?: string | undefined;
@@ -67,9 +67,11 @@ export interface DeviceSource {
   finish?(info: EngineFinishInfo): Promise<void>;
 }
 
-/** What a binding calls its device in progress and error lines: the name, else the id, else nothing. */
+/** What a binding calls its device in progress and error lines: `name (id)` when it has both, else whichever it has, else nothing. */
 export function deviceLabel(binding: Pick<SlotBinding, 'device' | 'deviceId'> | undefined): string | undefined {
-  return binding?.device ?? binding?.deviceId;
+  const { device, deviceId } = binding ?? {};
+  if (device === undefined || deviceId === undefined || device === deviceId) return device ?? deviceId;
+  return `${device} (${deviceId})`;
 }
 
 /**
