@@ -833,7 +833,7 @@ bunx e2e explore 'Hunt for broken forms and dead links' --agent thorough --video
 | Option | Description |
 | --- | --- |
 | `[goal]` | What to explore, in a sentence. Default: `Explore the app and find bugs`. |
-| `--config <path>` | Explicit config path, with the errors of `run`. Default: discovered. |
+| `--config <path>` | Explicit config path, with the errors of `run`. Default: discovered. When no config is found and both stdin and stdout are a terminal, the [`e2e init`](#e2e-init) wizard runs in the working directory first. The exploration follows when nothing is left to do by hand: dependencies installed, a model with its key set or its sign-in done, and a web target (it names the URL it explores). Otherwise init ends with the steps left, then the `e2e explore` command as typed. Without a terminal, no config is `CONFIG_NOT_FOUND`. |
 | `--target <id>` | The one target to explore. Default: the first configured target; with several targets and no flag, it explores the first and says so on stderr. An unknown name is `UNKNOWN_TARGET`. |
 | `--agent <name>` | The configured agent to explore as. Default: `default`. Its model, `system`, tools, and context are reused. The built-in agent replaces a hand-rolled `StepExecutor`, with a notice. An entry with no model, a custom executor's included, is `MODEL_UNAVAILABLE` before anything starts. An unknown name is `INVALID_CONFIG`. |
 | `--session <name>` | Starts signed in. The setup test in the config's test files that declares this session runs first. The exploration restores what it saved, as a test with `{ session }` does. No other test runs. A name no setup test declares is `COLLECTION_ERROR`, naming the declared ones, before any app process starts. See [Start signed in](/explore#start-signed-in). |
@@ -1055,12 +1055,13 @@ $ npm install
 ...
 Upgraded: e2e 0.21.2, @e2e-dev/web 0.15.2, @e2e-dev/kernel 0.2.1
 Release notes: https://github.com/tester-army/e2e/releases/tag/e2e%400.21.2
+Updated the agent skill in .agents/skills/e2e/ (12 files)
 ```
 
 | Option | Description |
 | --- | --- |
 | `[version]` | A version such as `0.22.0`, or a dist-tag such as `latest` or `nightly`. Ranges are refused. Default: `latest`. |
-| `--dry-run` | Prints the versions, the new specs, and the install command, and changes nothing. |
+| `--dry-run` | Prints the versions, the new specs, the install command, and the skill copies to update, and changes nothing. |
 
 - **The project.** The nearest `package.json` from the working directory up
   that lists `e2e`.
@@ -1082,8 +1083,10 @@ Release notes: https://github.com/tester-army/e2e/releases/tag/e2e%400.21.2
 - **A failed install.** `package.json` and any lockfile the install changed
   go back as they were. `node_modules` can keep some new versions until the
   next install.
-- **The saved range.** A named version or a prerelease is pinned exactly. A
-  dist-tag keeps the `^` or `~` of the old spec.
+- **The saved range.** Only a package whose installed version changes gets
+  a new spec: a named version or a prerelease is pinned exactly, and a
+  dist-tag keeps the `^` or `~` of the old spec. `e2e upgrade 0.21.3` over
+  an installed 0.21.3 leaves `^0.21.3` as written.
 - **Left alone.** A package linked with `workspace:`, `file:`, `link:`,
   `catalog:`, a path, or a git URL, and an `@e2e-dev/*` package the registry
   doesn't have. When `e2e` itself is linked, the command exits 2.
@@ -1093,8 +1096,12 @@ Release notes: https://github.com/tester-army/e2e/releases/tag/e2e%400.21.2
 - **The registry.** `npm_config_registry` when the package manager sets it,
   else `https://registry.npmjs.org/`.
 - **The agent skill.** A copy in `.agents/skills/e2e` or `.claude/skills/e2e`
-  stays at the old version. The command says so; run `e2e init` to refresh
-  it.
+  is updated to the installed version's after the install, and when
+  everything was already up to date. A `.claude/skills/e2e` symlink to the
+  `.agents/skills` copy follows it. Files the new skill no longer ships stay.
+  A symlink to a copy outside the project isn't written through, and without
+  `node_modules`, as under Yarn Plug'n'Play, the command names `e2e init`
+  instead.
 
 | Exit code | When |
 | --- | --- |
