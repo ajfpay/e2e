@@ -124,7 +124,7 @@ mobile({ platform: 'android' });
  * of the platform at `prepare` that no other agent-device session holds, as
  * many as the run has slots; with none booted, it boots one shut-down
  * simulator or emulator (an iPhone on the newest iOS first, or the first
- * phone AVD by name) and logs which, and with every booted one held,
+ * AVD by name) and logs which, and with every booted one held,
  * `prepare` fails. A `DeviceProvider`
  * leases hosted devices instead: one per worker slot at `prepare`, each driven through the daemon
  * and client configuration the lease names. A replacement worker resumes a

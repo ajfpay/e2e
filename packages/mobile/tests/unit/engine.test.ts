@@ -406,6 +406,9 @@ describe('lifecycle', () => {
       { ...shutDown, id: 'IPAD', name: 'iPad Pro 13-inch (M5)', appleOs: 'ipados', osVersion: '26.1' },
       { ...shutDown, id: 'PRO', name: 'iPhone 17 Pro', appleOs: 'ios', osVersion: '26.1' },
       { ...shutDown, id: 'BASE', name: 'iPhone 17', appleOs: 'ios', osVersion: '26.1' },
+      // What a stock Xcode 26 set picks: numeric name order puts 16e before 17.
+      { ...shutDown, id: 'E', name: 'iPhone 16e', appleOs: 'ios', osVersion: '26.1' },
+      { ...shutDown, id: 'HELD', name: 'iPhone 16 Plus', appleOs: 'ios', osVersion: '26.1', claimedBy: { session: 't3-holder', workspace: '/elsewhere' } },
       { ...shutDown, id: 'TV', name: 'Apple TV 4K', target: 'tv', appleOs: 'tvos', osVersion: '26.1' },
       { ...shutDown, id: 'AVP', name: 'Apple Vision Pro', appleOs: 'visionos', osVersion: '26.1' },
       { platform: 'ios', kind: 'device', target: 'mobile', id: 'PHONE', name: 'My iPhone', appleOs: 'ios', osVersion: '27.0', booted: false },
@@ -414,20 +417,19 @@ describe('lifecycle', () => {
     const info = { runId: 'run-1', targetName: 'ios', projectRoot: PROJECT_ROOT, slots: 2, env: {}, signal: new AbortController().signal, headed: false, log: (line: string) => lines.push(line) };
     const result = await h.prepare(info);
     expect(result).toMatchObject({ workers: 1 });
-    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', udid: 'BASE' });
+    expect(h.fake.lastArgs('devices.boot')).toEqual({ platform: 'ios', udid: 'E' });
     expect(lines.slice(0, 2)).toEqual([
-      "no booted ios device; picked iPhone 17 (26.1). Name another in the target's `device` option, or boot one first",
-      'booting iPhone 17 (BASE) (1 of 1)',
+      "no booted ios device; picked iPhone 16e (26.1). Name another in the target's `device` option, or boot one first",
+      'booting iPhone 16e (E) (1 of 1)',
     ]);
     const handed = result?.env ?? {};
-    expect(handed[poolVariableIn(handed, 'IOS')]).toBe(JSON.stringify([{ device: 'iPhone 17', deviceId: 'BASE' }]));
+    expect(handed[poolVariableIn(handed, 'IOS')]).toBe(JSON.stringify([{ device: 'iPhone 16e', deviceId: 'E' }]));
 
-    // An AVD has no serial until it runs, so it binds by name; a car or watch image is never picked.
+    // An AVD has no serial until it runs, so it binds by name; one agent-device reports as a TV is never picked.
     const avd = { platform: 'android', kind: 'emulator', target: 'mobile', booted: false };
     const android = harness({ device: undefined, platform: 'android' });
     android.fake.respond('devices.list', () => [
-      { ...avd, id: 'Automotive_1024p_landscape_API_34', name: 'Automotive_1024p_landscape_API_34' },
-      { ...avd, id: 'Wear_OS_Large_Round_API_34', name: 'Wear_OS_Large_Round_API_34' },
+      { ...avd, id: 'Android_TV_1080p', name: 'Android_TV_1080p', target: 'tv' },
       { ...avd, id: 'Pixel_9', name: 'Pixel_9' },
       { ...avd, id: 'Pixel_10', name: 'Pixel_10' },
     ]);

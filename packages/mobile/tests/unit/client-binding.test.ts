@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { mobile } from '../../src/engine.ts';
-import { bindingsVariable, encodeBindings, type SlotBinding } from '../../src/bindings.ts';
+import { bindingsVariable, deviceLabel, encodeBindings, type SlotBinding } from '../../src/bindings.ts';
 import { createFakeClient } from '../helpers/fake-client.ts';
 
 const created = vi.hoisted(() => vi.fn());
@@ -31,4 +31,13 @@ it.each([false, true])('keeps an explicit provider binding when ambient daemon s
     ...(remote ? {} : { daemonTransport: 'auto' }),
   });
   expect(process.env.AGENT_DEVICE_DAEMON_BASE_URL).toBe('http://127.0.0.1:1');
+});
+
+it('labels a device by name and id when the binding has both, else by whichever it has', () => {
+  expect(deviceLabel({ device: 'iPhone 17', deviceId: '948FF738' })).toBe('iPhone 17 (948FF738)');
+  expect(deviceLabel({ device: 'A', deviceId: 'A' })).toBe('A');
+  expect(deviceLabel({ device: 'Pixel_9' })).toBe('Pixel_9');
+  expect(deviceLabel({ deviceId: 'emulator-5554' })).toBe('emulator-5554');
+  expect(deviceLabel({})).toBeUndefined();
+  expect(deviceLabel(undefined)).toBeUndefined();
 });
