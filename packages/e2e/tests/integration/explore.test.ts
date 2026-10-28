@@ -247,7 +247,10 @@ describe('e2e explore', () => {
       assertValidReport(outcome.report);
       await expect(runExplore(changed, app, model, { changedSince: 'no-such-ref' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
       // A ref that reads as a git option never reaches git.
-      await expect(runExplore(changed, app, model, { changedSince: '--output=/tmp/x' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
+      await expect(runExplore(changed, app, model, { changedSince: '--output=/tmp/x' })).rejects.toMatchObject({
+        code: 'INVALID_CHANGED_SINCE',
+        message: '--changed-since must name a git ref, such as origin/main; got "--output=/tmp/x"',
+      });
     } finally {
       changed.cleanup();
     }
