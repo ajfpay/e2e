@@ -10,8 +10,22 @@ import { COMMIT_HASH, GitFailure, runGit, type GitResult } from '../internal/git
 import { compareCodePoints } from '../internal/globs.ts';
 import { onDiskPath } from '../internal/paths.ts';
 import { budgetText } from '../internal/time.ts';
+import { describeValue } from '../config/validate.ts';
 import { ellipsize } from '../report/format.ts';
 import type { TestFilterChanges } from '../types.ts';
+
+/**
+ * A `changedSince` that is not a string, is empty, or reads as a git option
+ * is `INVALID_CHANGED_SINCE` before git is asked.
+ */
+export function validateChangedSince(ref: unknown): void {
+  if (ref !== undefined && typeof ref !== 'string') {
+    throw new ConfigurationError('INVALID_CHANGED_SINCE', `--changed-since must name a git ref, such as origin/main; got ${describeValue(ref)}`);
+  }
+  if (ref !== undefined && (ref === '' || ref.startsWith('-'))) {
+    throw new ConfigurationError('INVALID_CHANGED_SINCE', `--changed-since must name a git ref, such as origin/main; got ${JSON.stringify(ref)}`);
+  }
+}
 
 /** What `findChanges` asks git from, and when it gives up. */
 interface ChangeOptions {

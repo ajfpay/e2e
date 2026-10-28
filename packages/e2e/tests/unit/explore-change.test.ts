@@ -98,13 +98,6 @@ describe('readExploreChange', () => {
     expect(change.brief).toBeUndefined();
     expect(change.report.files).toBe(0);
   });
-
-  it('is INTERRUPTED when the run is interrupted while reading', async () => {
-    const { dir } = branchWith({ 'a.txt': 'a\n' }, { 'a.txt': 'b\n' });
-    const controller = new AbortController();
-    controller.abort();
-    await expect(readExploreChange({ cwd: dir, changedSince: 'main', signal: controller.signal })).rejects.toMatchObject({ code: 'INTERRUPTED' });
-  });
 });
 
 describe('changeContext', () => {

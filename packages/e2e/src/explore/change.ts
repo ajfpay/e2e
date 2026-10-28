@@ -48,8 +48,12 @@ export interface ExploreChange {
 
 interface ChangedFile {
   readonly file: string;
-  /** What the commits since the base did to it; undefined when no commit changed it. */
-  readonly committed: { readonly lines: { readonly added: number; readonly removed: number } | undefined } | undefined;
+  /**
+   * What the commits since the base did to it: its line counts (undefined
+   * for a binary file), `unknown` when git could not say which files the
+   * commits changed, or undefined when no commit changed it.
+   */
+  readonly committed: { readonly lines: { readonly added: number; readonly removed: number } | undefined } | 'unknown' | undefined;
 }
 
 interface Patch {
@@ -72,7 +76,7 @@ export async function readExploreChange(options: { readonly cwd: string; readonl
   const read = new GitReader(changes.root, signal);
   try {
     const [counts, commits] = await Promise.all([read.lineCounts(changes.base), read.commitMessages(changes.base)]);
-    const files = changes.files.map((file): ChangedFile => ({ file, committed: counts.get(file) }));
+    const files = changes.files.map((file): ChangedFile => ({ file, committed: counts === undefined ? 'unknown' : counts.get(file) }));
     const patches = await read.patches(changes.base, files);
     return { report, brief: renderBrief(changes.base, files, patches, commits) };
   } catch (cause) {
@@ -88,11 +92,12 @@ class GitReader {
     private readonly signal: AbortSignal,
   ) {}
 
-  /** Line counts per file the commits since `base` change; a binary file counts as undefined. */
-  async lineCounts(base: string): Promise<Map<string, NonNullable<ChangedFile['committed']>>> {
-    const counts = new Map<string, NonNullable<ChangedFile['committed']>>();
+  /** Line counts per file the commits since `base` change, a binary file's undefined; undefined when git did not answer. */
+  async lineCounts(base: string): Promise<Map<string, { lines: { added: number; removed: number } | undefined }> | undefined> {
     const output = await this.output(['diff', '--numstat', '--no-renames', '--no-ext-diff', '-z', base, 'HEAD', '--']);
-    for (const entry of output?.split('\0') ?? []) {
+    if (output === undefined) return undefined;
+    const counts = new Map<string, { lines: { added: number; removed: number } | undefined }>();
+    for (const entry of output.split('\0')) {
       const match = /^(-|\d+)\t(-|\d+)\t(.+)$/su.exec(entry);
       if (match === null) continue;
       const [, added, removed, file] = match;
@@ -125,7 +130,7 @@ class GitReader {
    */
   async patches(base: string, files: readonly ChangedFile[]): Promise<Map<string, Patch>> {
     const patches = new Map<string, Patch>();
-    const readable = files.filter((file) => file.committed?.lines !== undefined);
+    const readable = files.filter((file) => typeof file.committed === 'object' && file.committed.lines !== undefined);
     let left = PATCH_BUDGET_BYTES;
     for (let start = 0; start < readable.length && left >= MIN_PATCH_BYTES; start += PATCH_CONCURRENCY) {
       const batch = readable.slice(start, start + PATCH_CONCURRENCY);
@@ -194,6 +199,7 @@ function renderBrief(base: string, files: readonly ChangedFile[], patches: Reado
 /** `+3 -1; full patch below`, or why no patch follows. */
 function describe(file: ChangedFile, patch: Patch | undefined): string {
   if (file.committed === undefined) return 'not committed, contents not read';
+  if (file.committed === 'unknown') return 'line counts not available';
   if (file.committed.lines === undefined) return 'binary';
   const counts = `+${file.committed.lines.added} -${file.committed.lines.removed}`;
   if (patch === undefined) return `${counts}; patch not shown`;

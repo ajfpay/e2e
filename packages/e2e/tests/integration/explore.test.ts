@@ -246,6 +246,8 @@ describe('e2e explore', () => {
       expect(labels.every((label) => !label.includes('<output>{count}</output>'))).toBe(true);
       assertValidReport(outcome.report);
       await expect(runExplore(changed, app, model, { changedSince: 'no-such-ref' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
+      // A ref that reads as a git option never reaches git.
+      await expect(runExplore(changed, app, model, { changedSince: '--output=/tmp/x' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
     } finally {
       changed.cleanup();
     }

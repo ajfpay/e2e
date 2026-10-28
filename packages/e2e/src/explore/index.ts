@@ -17,6 +17,7 @@ import { resolveConfig, type ResolvedConfig, type ResolvedCredential, type Resol
 import { launchesPinnedApp } from '../config/targets.ts';
 import { ConfigurationError } from '../internal/errors.ts';
 import type { ReportExplore } from '../report/build.ts';
+import { validateChangedSince } from '../run/changes.ts';
 import type { RunEventSink } from '../run/events.ts';
 import type { RunnerOutput } from '../run/process-output.ts';
 import { run, type RunOutcome } from '../run/runner.ts';
@@ -128,6 +129,10 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
   const env = options.env ?? process.env;
   const earlyNotices: string[] = [];
   const notice = options.notice ?? ((message: string) => void earlyNotices.push(message));
+  // A supplied goal is checked before the config runs; with no goal, the change decides the default once it is read.
+  const givenGoal = options.goal?.trim() === '' ? undefined : options.goal;
+  if (givenGoal !== undefined) resolveGoal(givenGoal, DEFAULT_GOAL);
+  validateChangedSince(options.changedSince);
   const budgets = {
     maxSteps: resolveBounded(options.maxSteps, STEP_BOUNDS, 'maxSteps'),
     timeoutMs: resolveBounded(options.timeoutMs, TIMEOUT_BOUNDS, 'timeout'),
@@ -145,7 +150,7 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
     ? loadConfig()
     : options.processOutput.withholdDuring(loadConfig));
   const change = await exploreChange(options.changedSince, projectRoot, options.interruptSignal, notice);
-  const goal = resolveGoal(options.goal, change?.brief === undefined ? DEFAULT_GOAL : DEFAULT_CHANGE_GOAL);
+  const goal = resolveGoal(givenGoal, change?.brief === undefined ? DEFAULT_GOAL : DEFAULT_CHANGE_GOAL);
   const target = pickTarget(resolved.targets, options.target, notice);
   const accounts = credentialAccounts(resolved.credentials);
   // An exploration runs as exactly one agent: the one named, else `default`.
@@ -331,7 +336,7 @@ function exploreRegistration(
   const { session, change, ...body } = start;
   // The change rides in the trusted context, never in a step's label: the
   // planner reads it, the explorer judges against it, and the report and
-  // its artifacts never copy it.
+  // the trace page never copy it; only the opt-in AI trace records prompts.
   const context = [...(session === undefined ? [] : [signedInContext(session)]), ...(change === undefined ? [] : [changeContext(change)])];
   const test: RegisteredTest = {
     kind: 'test',

@@ -307,8 +307,8 @@ same layout as its own rows. The `json` reporter does not carry them.
   the run passed `--changed-since`, except on `--watch` reruns and when
   the run ends before the filters decide. On `--last-failed`, or with no
   tests to judge, it holds `skipped` alone. Under `e2e explore
-  --changed-since`, it holds the change the exploration planned from,
-  `base` and `files`, and no filter runs.
+  --changed-since`, it holds the change git measured, `base` and `files`,
+  and no filter runs.
 - A failure while the filters decide, such as `INVALID_CHANGED_SINCE` for a
   ref that names no commit, is in `run.errors` with `phase` `filter`. A
   malformed `changedSince` has `phase` `config`.

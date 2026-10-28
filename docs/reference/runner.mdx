@@ -184,6 +184,7 @@ reject first, as the matching `e2e explore` flags do. Recognize them with
 | `INVALID_CONFIG` | `goal`, `maxSteps`, or `timeoutMs` is out of range, or `agent` names no configured agent. |
 | `UNKNOWN_TARGET` | `target` names no configured target. |
 | `MODEL_UNAVAILABLE` | The agent has no model. |
+| `INVALID_CHANGED_SINCE` | `changedSince` is empty, starts with `-`, or names a ref git can't measure a change from. |
 | `RUNNER_BUSY` | A suite or an exploration is running, or a host is open. |
 | The codes `run` records | The config is missing, or the loader refused it. |
 

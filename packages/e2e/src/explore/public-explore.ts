@@ -18,7 +18,7 @@ export interface ExplorationOptions {
   readonly cwd?: string | undefined;
   /** A config file path, or a config value in place of a file. Omit it to discover `e2e.config.ts` from `cwd`. */
   readonly config?: string | E2EConfig | undefined;
-  /** What to explore, at most 2,000 characters; default: `Explore the app and find bugs`, or with `changedSince`, `Explore what this change affects and find bugs in it`. */
+  /** What to explore, at most 2,000 characters; default: `Explore the app and find bugs`, or `Explore what this change affects and find bugs in it` when `changedSince` finds changed files. */
   readonly goal?: string | undefined;
   /** The target to explore; default: the first configured. */
   readonly target?: string | undefined;

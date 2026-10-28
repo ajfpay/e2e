@@ -116,7 +116,8 @@ bunx e2e explore --changed-since origin/main
 
 On GitHub Actions, run it in its own job on `pull_request`. With the
 [GitHub reporter](/github) in the config, the findings go to their own pull
-request comment:
+request comment. A fork's run can't post; see
+[when nothing is posted](/github#when-nothing-is-posted).
 
 ```yaml title=".github/workflows/explore.yml"
 on: pull_request
