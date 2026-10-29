@@ -5,33 +5,44 @@
  * drives an engine in its own process. Nothing past this file knows the
  * difference.
  *
- * A handle opens at most two connections in one process, mirroring where
- * the harness calls an engine: a `run` connection from `prepare` to
- * `finish`, in the runner, and a `worker` connection from `init` to
- * `dispose`, in each worker. Neither shares state with the other, exactly as
- * a runner and its child-process workers share none.
+ * A handle opens at most two kinds of connection in one process, mirroring
+ * where the harness calls an engine: a `run` connection per target from
+ * `prepare` to `finish`, in the runner, and a `worker` connection from
+ * `init` to `dispose`, in each worker. Neither shares state with the other,
+ * exactly as a runner and its child-process workers share none.
  */
 
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ConfigurationError, InfrastructureError } from '../../internal/errors.ts';
+import { InfrastructureError } from '../../internal/errors.ts';
+import { obj } from '../../internal/objects.ts';
 import { packageVersion } from '../../internal/package-version.ts';
+import { relativeToProjectRoot } from '../../internal/paths.ts';
+import { cancelledError, withAbort } from '../../internal/time.ts';
 import { secretHandle } from '../../secrets.ts';
-import { ENGINE_SPI_VERSION, EngineError, LOCATOR_ACTION_KINDS, POINTER_ACTION_KINDS } from '../contract.ts';
+import { EngineError } from '../contract.ts';
 import { defineEngine } from '../manifest.ts';
 import { resolveExpression } from '../resolve.ts';
 import type {
   Engine,
   EngineAppInfo,
   EngineAttemptContext,
+  EngineCleanupContext,
+  EngineDisposeContext,
+  EngineFinishInfo,
   EngineHandle,
+  EngineInitInfo,
+  EnginePrepareInfo,
+  EnginePrepareResult,
+  LocatorExpression,
   OperationContext,
 } from '../index.ts';
 import type { JsonValue, Secret } from '../../types.ts';
 import { Connection, RpcError, RPC_ERRORS } from './connection.ts';
+import { checkManifest, describeEngine, manifestMismatch } from './manifest.ts';
 import {
-  ENGINE_METHODS,
   ENGINE_PROTOCOL_VERSION,
+  METHODS,
   decodeError,
   decodeSnapshot,
   encodeAbortReason,
@@ -41,12 +52,12 @@ import {
   type EngineMethod,
   type InitializeParams,
   type InitializeResult,
+  type OperationMethod,
   type WireOperation,
   type WireSignal,
   type WireSnapshot,
 } from './protocol.ts';
 import { loopbackTransport, type EngineTransport, type TransportConnection } from './transport.ts';
-import { describeEngine } from './server.ts';
 
 /** Options of `connectEngine`. */
 export interface ConnectEngineOptions {
@@ -89,48 +100,280 @@ type ScreenshotResult = { readonly path: string } | { readonly data: string; rea
 /** Budget of the `shutdown` handshake when a connection closes outside a cleanup hook. */
 const DEFAULT_CLOSE_MS = 5000;
 
+/** The runner version `initialize` reports; servers check the protocol version, never this. */
+const CLIENT_VERSION = packageVersion(import.meta.url, '../../../package.json', '0.0.0');
+
+/** What opening a connection needs from the hook that opens it. */
+interface OpenContext {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly cwd: string;
+  readonly signal: AbortSignal;
+  readonly app: EngineAppInfo;
+  readonly log: (line: string) => void;
+}
+
 /** One open connection and the state that lives exactly as long as it. */
 interface Link {
   readonly connection: Connection;
   readonly transport: TransportConnection;
   readonly signals: SignalEncoder;
-  readonly log: ((line: string) => void) | undefined;
 }
 
 /**
  * Connects to an engine server and returns it as an engine handle, the
- * value a target's `engine` takes.
+ * value a target's `engine` takes. The handle is built from the manifest
+ * and checked by `defineEngine`, so a manifest is held to every rule an
+ * engine in this process is.
  */
 export function connectEngine(options: ConnectEngineOptions): EngineHandle {
-  const manifest = checkManifest(options.manifest);
-  const declared = new Set<EngineMethod>(manifest.methods);
-  const has = (method: EngineMethod): boolean => declared.has(method);
-  const { transport } = options;
-  const secrets = new Map((options.secrets ?? []).map((secret) => [secret.name, secret]));
-  // One run connection per target: a handle two targets share is prepared
-  // and finished once for each.
-  const runs = new Map<string, Promise<Link>>();
-  let worker: Promise<Link> | undefined;
-  let attempt: EngineAttemptContext | undefined;
-  let screenshots = 0;
+  const handle = defineEngine(new EngineClient(checkManifest(options.manifest), options).engine());
+  clients.add(handle);
+  return handle;
+}
 
-  const currentAttempt = (attemptId: string): EngineAttemptContext | undefined =>
-    attempt?.attemptId === attemptId ? attempt : undefined;
+declare const engineClientBrand: unique symbol;
 
-  // An undeclared name still reaches the harness, which refuses it with
-  // the message it gives an engine in its own process.
-  const secretNamed = (name: string): Secret => secrets.get(name) ?? secretHandle({ name, purpose: 'generic-secret' });
+/** An engine handle the harness drives over the protocol: one `connectEngine` made. The harness holds no other kind. */
+export type EngineClientHandle = EngineHandle & { readonly [engineClientBrand]: true };
 
-  const open = async (
-    role: ConnectionRole,
-    context: {
-      env: Readonly<Record<string, string | undefined>>;
-      cwd: string;
-      signal: AbortSignal;
-      app?: EngineAppInfo;
-      log?: (line: string) => void;
-    },
-  ): Promise<Link> => {
+/** Handles `connectEngine` made, which already speak the protocol. */
+const clients = new WeakSet<EngineHandle>();
+
+function isEngineClient(engine: EngineHandle): engine is EngineClientHandle {
+  return clients.has(engine);
+}
+
+/** The client each in-process engine is served through, so every config load gets the same one. */
+const loopbacks = new WeakMap<EngineHandle, EngineClientHandle>();
+
+/**
+ * The engine as the harness drives it: over the protocol. A `connectEngine`
+ * handle already is; an engine in this process is served over
+ * `loopbackTransport`, so every call crosses the wire format a remote engine
+ * would receive. Fixtures, the app check, and the declared secrets stay the
+ * engine's own: they belong to the client half of any engine. One engine
+ * always gets the same client, so a handle two targets or two config loads
+ * share stays one instance.
+ */
+export function protocolEngine(engine: EngineHandle): EngineClientHandle {
+  if (isEngineClient(engine)) return engine;
+  let client = loopbacks.get(engine);
+  if (client === undefined) {
+    const connected = connectEngine(
+      obj({
+        manifest: describeEngine(engine),
+        transport: loopbackTransport(engine),
+        secrets: engine.secrets,
+        fixtures: engine.fixtures,
+        validateApp: engine.validateApp,
+      }),
+    );
+    if (!isEngineClient(connected)) throw new Error('connectEngine returned a handle it did not make');
+    client = connected;
+    loopbacks.set(engine, client);
+  }
+  return client;
+}
+
+/** The engine half of `connectEngine`: one server's connections, and the engine members that drive them. */
+class EngineClient {
+  readonly #manifest: EngineManifest;
+  readonly #options: ConnectEngineOptions;
+  readonly #secrets: ReadonlyMap<string, Secret>;
+  /** One run connection per target: a handle two targets share is prepared and finished once for each. */
+  readonly #runs = new Map<string, Promise<Link>>();
+  /**
+   * Worker connections, oldest first. A handle one process shares (an MCP
+   * session closing while the next opens) runs `init` again before the
+   * previous `dispose`: calls go to the newest, `dispose` ends the oldest.
+   */
+  readonly #workers: Promise<Link>[] = [];
+  #attempt: EngineAttemptContext | undefined;
+  #screenshots = 0;
+
+  constructor(manifest: EngineManifest, options: ConnectEngineOptions) {
+    this.#manifest = manifest;
+    this.#options = options;
+    this.#secrets = new Map((options.secrets ?? []).map((secret) => [secret.name, secret]));
+  }
+
+  /** The engine the manifest describes, each declared method one member; `defineEngine` checks it. */
+  engine(): Engine {
+    const manifest = this.#manifest;
+    const has = (method: EngineMethod): boolean => manifest.methods.includes(method);
+    const members: Record<string, unknown> = {};
+    for (const method of manifest.methods) {
+      const spec = METHODS[method];
+      if (spec.kind === 'operation') setMember(members, spec.member, (...args: unknown[]) => this.#operate(method, spec, args));
+    }
+    if (members['locate'] === undefined && this.#options.resolveLocators === true && members['observe'] !== undefined) {
+      const observe = members['observe'] as NonNullable<Engine['observe']>;
+      members['locate'] = async (expression: LocatorExpression, operation: OperationContext) =>
+        resolveExpression(expression, (await observe(operation)).root.children ?? []);
+    }
+    const runs = has('lifecycle/prepare') || has('lifecycle/finish');
+    const engine: Engine = {
+      ...obj({
+        name: manifest.name,
+        version: manifest.version,
+        spiVersion: manifest.spiVersion,
+        platform: manifest.platform,
+        workers: manifest.workers,
+        actions: manifest.actions,
+        pointerActions: manifest.pointerActions,
+        tapModifiers: manifest.tapModifiers,
+        secrets: this.#options.secrets,
+        fixtures: this.#options.fixtures,
+        validateApp: this.#options.validateApp,
+        prepare: runs ? (info: EnginePrepareInfo) => this.#prepare(info) : undefined,
+        finish: runs ? (info: EngineFinishInfo) => this.#finish(info) : undefined,
+        settleAttempt: has('lifecycle/settleAttempt')
+          ? (context: EngineCleanupContext) => this.#forward('lifecycle/settleAttempt', context)
+          : undefined,
+      }),
+      ...members,
+      init: (info) => this.#init(info),
+      startAttempt: (context) => this.#startAttempt(context),
+      endAttempt: (context) => this.#endAttempt(context),
+      dispose: (context) => this.#dispose(context),
+    };
+    return engine;
+  }
+
+  /** Sends one operation method over the worker connection: its arguments by name, its result decoded. */
+  async #operate(method: EngineMethod, spec: OperationMethod, args: readonly unknown[]): Promise<unknown> {
+    const link = await this.#workerLink();
+    const params: Record<string, unknown> = {};
+    spec.args.forEach((name, index) => {
+      params[name] = name === 'operation' ? encodeOperation(link, args[index] as OperationContext) : args[index];
+    });
+    const result = await this.#call(link, method, params);
+    if (spec.result === 'snapshot') return decodeSnapshot(result as WireSnapshot);
+    if (spec.result === 'screenshot') return this.#screenshot(result as ScreenshotResult, params['label'] as string | undefined);
+    return result ?? undefined;
+  }
+
+  async #prepare(info: EnginePrepareInfo): Promise<void | EnginePrepareResult> {
+    const { signal, log, ...rest } = info;
+    const pending = this.#open('run', { env: info.env, cwd: info.projectRoot, signal, app: info.app, log });
+    this.#runs.set(info.targetName, pending);
+    const link = await pending;
+    if (!this.#manifest.methods.includes('lifecycle/prepare')) return;
+    const result = await this.#call(link, 'lifecycle/prepare', { ...rest, signal: link.signals.encode(signal) });
+    return (result ?? undefined) as EnginePrepareResult | undefined;
+  }
+
+  async #finish(info: EngineFinishInfo): Promise<void> {
+    const pending = this.#runs.get(info.targetName);
+    this.#runs.delete(info.targetName);
+    const link = await pending?.catch(() => undefined);
+    if (link === undefined) return;
+    const deadline = Date.now() + info.timeoutMs;
+    try {
+      if (this.#manifest.methods.includes('lifecycle/finish')) {
+        const { signal, log: _log, ...rest } = info;
+        await this.#call(link, 'lifecycle/finish', { ...rest, signal: link.signals.encode(signal) });
+      }
+    } finally {
+      await this.#close(link, deadline - Date.now());
+    }
+  }
+
+  async #init(info: EngineInitInfo): Promise<void> {
+    const { signal, log, ...rest } = info;
+    const pending = this.#open('worker', { env: info.env, cwd: info.projectRoot, signal, app: info.app, log });
+    this.#workers.push(pending);
+    const link = await pending;
+    if (this.#manifest.methods.includes('lifecycle/init')) {
+      await this.#call(link, 'lifecycle/init', { ...rest, signal: link.signals.encode(signal) });
+    }
+  }
+
+  /** Tracks the attempt, which the server's callbacks and a screenshot's bytes land in, and forwards it when the server answers. */
+  async #startAttempt(context: EngineAttemptContext): Promise<void> {
+    this.#attempt = context;
+    this.#screenshots = 0;
+    if (!this.#manifest.methods.includes('lifecycle/startAttempt')) return;
+    const link = await this.#workerLink();
+    await this.#call(link, 'lifecycle/startAttempt', {
+      attemptId: context.attemptId,
+      artifactsDir: context.artifactsDir,
+      signal: link.signals.encode(context.signal),
+      screens: context.screen !== undefined,
+    });
+  }
+
+  async #endAttempt(context: EngineCleanupContext): Promise<void> {
+    try {
+      if (this.#manifest.methods.includes('lifecycle/endAttempt')) await this.#forward('lifecycle/endAttempt', context);
+    } finally {
+      this.#attempt = undefined;
+    }
+  }
+
+  /**
+   * Ends the oldest worker connection. A worker that never called `init`
+   * has no connection, and a fresh connection's engine has nothing to
+   * release, so the server gets no `lifecycle/dispose` for it.
+   */
+  async #dispose(context: EngineDisposeContext): Promise<void> {
+    const pending = this.#workers.shift();
+    if (this.#workers.length === 0) this.#attempt = undefined;
+    const link = await pending?.catch(() => undefined);
+    if (link === undefined) return;
+    const deadline = Date.now() + context.timeoutMs;
+    try {
+      if (this.#manifest.methods.includes('lifecycle/dispose')) {
+        await this.#call(link, 'lifecycle/dispose', {
+          signal: link.signals.encode(context.signal),
+          timeoutMs: context.timeoutMs,
+          ...(context.reuseSignal === undefined ? {} : { reuseSignal: link.signals.encode(context.reuseSignal) }),
+        });
+      }
+    } finally {
+      await this.#close(link, Math.min(DEFAULT_CLOSE_MS, deadline - Date.now()));
+    }
+  }
+
+  /** Sends a cleanup hook over the worker connection. */
+  async #forward(method: 'lifecycle/settleAttempt' | 'lifecycle/endAttempt', context: EngineCleanupContext): Promise<void> {
+    const link = await this.#workerLink();
+    await this.#call(link, method, { signal: link.signals.encode(context.signal), timeoutMs: context.timeoutMs });
+  }
+
+  /**
+   * Where a screenshot landed: a path the server wrote, which must stay under
+   * the attempt's artifact directory, or the bytes it returned, written there
+   * by the client.
+   */
+  async #screenshot(result: ScreenshotResult, label: string | undefined): Promise<string> {
+    const attempt = this.#attempt;
+    if ('path' in result) {
+      if (attempt !== undefined && (path.isAbsolute(result.path) || relativeToProjectRoot(attempt.artifactsDir, path.resolve(attempt.artifactsDir, result.path)) === undefined)) {
+        throw new EngineError('ENGINE_FAILURE', `engine server wrote a screenshot outside the attempt's artifact directory: ${result.path}`, { retryable: false });
+      }
+      return result.path;
+    }
+    if (attempt === undefined) throw new EngineError('INVALID_STATE', 'screenshot outside an attempt', { retryable: false });
+    this.#screenshots += 1;
+    const name = (label ?? 'screenshot').replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'screenshot';
+    const relative = path.join('screenshots', `${String(this.#screenshots).padStart(3, '0')}-${name}.png`);
+    await mkdir(path.join(attempt.artifactsDir, 'screenshots'), { recursive: true });
+    await writeFile(path.join(attempt.artifactsDir, relative), Buffer.from(result.data, 'base64'));
+    return relative;
+  }
+
+  #workerLink(): Promise<Link> {
+    const newest = this.#workers.at(-1);
+    if (newest === undefined) {
+      throw new EngineError('INVALID_STATE', `engine "${this.#manifest.name}" is not initialized: init opens its connection`, { retryable: false });
+    }
+    return newest;
+  }
+
+  /** Opens a connection: the transport, then `initialize`, whose manifest must match the declared one. */
+  async #open(role: ConnectionRole, context: OpenContext): Promise<Link> {
+    const { transport } = this.#options;
     // The transport's signal covers opening only: the hook's own signal can
     // abort long after (a worker's init signal aborts with the worker).
     const opening = new AbortController();
@@ -139,40 +382,69 @@ export function connectEngine(options: ConnectEngineOptions): EngineHandle {
     else context.signal.addEventListener('abort', forward, { once: true });
     let streams: TransportConnection;
     try {
-      streams = await transport.open({
-        role,
-        env: context.env,
-        cwd: context.cwd,
-        signal: opening.signal,
-        ...(context.app === undefined ? {} : { app: context.app }),
-      });
+      streams = await transport.open({ role, env: context.env, cwd: context.cwd, signal: opening.signal, app: context.app });
     } finally {
       context.signal.removeEventListener('abort', forward);
     }
+    const connection = this.#connection(streams, context.log);
+    const link: Link = { connection, transport: streams, signals: new SignalEncoder(connection) };
+    try {
+      const params: InitializeParams = obj({
+        protocolVersion: ENGINE_PROTOCOL_VERSION,
+        clientInfo: { name: 'e2e', version: CLIENT_VERSION },
+        role,
+        initializationOptions: this.#options.initializationOptions,
+      });
+      const result = (await withAbort(this.#call(link, 'initialize', params), context.signal, cancelledError)) as InitializeResult;
+      const mismatch = manifestMismatch(this.#manifest, result.manifest);
+      if (mismatch !== undefined) {
+        throw new InfrastructureError(
+          'ENGINE_FAILURE',
+          `engine server ${transport.label} announced a manifest that differs from the one declared for "${this.#manifest.name}": ${mismatch}`,
+        );
+      }
+      connection.notify('initialized', {});
+      return link;
+    } catch (cause) {
+      connection.close('initialize failed');
+      await streams.close(0);
+      throw cause;
+    }
+  }
+
+  /** A connection over `streams` that routes the server's callbacks to the live attempt and its log lines to `log`. */
+  #connection(streams: TransportConnection, log: (line: string) => void): Connection {
+    const attempt = (attemptId: string): EngineAttemptContext | undefined =>
+      this.#attempt?.attemptId === attemptId ? this.#attempt : undefined;
     const requireAttempt = (attemptId: string): EngineAttemptContext => {
-      const live = currentAttempt(attemptId);
+      const live = attempt(attemptId);
       if (live === undefined) throw new Error(`attempt ${attemptId} is not running`);
       return live;
     };
-    const connection = new Connection(streams, {
+    // An undeclared name still reaches the harness, which refuses it with
+    // the message it gives an engine in its own process.
+    const secretNamed = (name: string): Secret => this.#secrets.get(name) ?? secretHandle({ name, purpose: 'generic-secret' });
+    return new Connection(streams, {
       encodeError,
+      onNotificationError: (method, cause) =>
+        log(`engine server ${this.#options.transport.label} sent a malformed "${method}" notification: ${cause instanceof Error ? cause.message : String(cause)}`),
       notifications: {
-        'engine/log': (params) => link.log?.((params as { line: string }).line),
+        'engine/log': (params) => log((params as { line: string }).line),
         'attempt/appLog': (params) => {
           const { attemptId, entry } = params as { attemptId: string; entry: Parameters<EngineAttemptContext['appLog']>[0] };
-          currentAttempt(attemptId)?.appLog(entry);
+          attempt(attemptId)?.appLog(entry);
         },
         'attempt/navigation': (params) => {
           const { attemptId, line } = params as { attemptId: string; line: string };
-          currentAttempt(attemptId)?.navigation(line);
+          attempt(attemptId)?.navigation(line);
         },
         'attempt/environment': (params) => {
           const { attemptId, facts } = params as { attemptId: string; facts: Record<string, string> };
-          currentAttempt(attemptId)?.environment(facts);
+          attempt(attemptId)?.environment(facts);
         },
         'attempt/screen': (params) => {
           const { attemptId, snapshot } = params as { attemptId: string; snapshot: WireSnapshot };
-          currentAttempt(attemptId)?.screen?.(decodeSnapshot(snapshot));
+          attempt(attemptId)?.screen?.(decodeSnapshot(snapshot));
         },
       },
       requests: {
@@ -187,37 +459,14 @@ export function connectEngine(options: ConnectEngineOptions): EngineHandle {
         },
       },
     });
-    const link: Link = { connection, transport: streams, signals: new SignalEncoder(connection), log: context.log };
-    try {
-      const params: InitializeParams = {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        clientInfo: { name: 'e2e', version: CLIENT_VERSION },
-        role,
-        ...(options.initializationOptions === undefined ? {} : { initializationOptions: options.initializationOptions }),
-      };
-      const result = (await abortable(call(link, 'initialize', params), context.signal)) as InitializeResult;
-      const mismatch = manifestMismatch(manifest, result.manifest);
-      if (mismatch !== undefined) {
-        throw new InfrastructureError(
-          'ENGINE_FAILURE',
-          `engine server ${transport.label} announced a manifest that differs from the one declared for "${manifest.name}": ${mismatch}`,
-        );
-      }
-      connection.notify('initialized', {});
-      return link;
-    } catch (cause) {
-      connection.close('initialize failed');
-      await streams.close(0);
-      throw cause;
-    }
-  };
+  }
 
   /** Ends a connection: `shutdown`, `exit`, then the transport, all within `timeoutMs`. */
-  const close = async (link: Link, timeoutMs: number): Promise<void> => {
-    const deadline = Date.now() + timeoutMs;
+  async #close(link: Link, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
     try {
       if (link.connection.closed === undefined) {
-        await abortable(link.connection.request('shutdown'), AbortSignal.timeout(Math.max(0, timeoutMs)));
+        await withAbort(link.connection.request('shutdown'), AbortSignal.timeout(Math.max(0, timeoutMs)), cancelledError);
         link.connection.notify('exit');
       }
     } catch {
@@ -226,10 +475,10 @@ export function connectEngine(options: ConnectEngineOptions): EngineHandle {
       link.connection.close('the client closed the connection');
       await link.transport.close(Math.max(0, deadline - Date.now()));
     }
-  };
+  }
 
   /** Sends one request and rethrows its failure as the error the engine member threw. */
-  const call = async (link: Link, method: string, params: object): Promise<unknown> => {
+  async #call(link: Link, method: string, params: object): Promise<unknown> {
     try {
       return await link.connection.request(method, params);
     } catch (cause) {
@@ -238,254 +487,24 @@ export function connectEngine(options: ConnectEngineOptions): EngineHandle {
         const diagnostics = link.transport.diagnostics?.() ?? '';
         throw new InfrastructureError(
           'ENGINE_FAILURE',
-          `engine server ${transport.label} closed the connection: ${cause.message}${diagnostics === '' ? '' : `; ${diagnostics}`}`,
+          `engine server ${this.#options.transport.label} closed the connection: ${cause.message}${diagnostics === '' ? '' : `; ${diagnostics}`}`,
         );
       }
       throw decodeError(cause);
     }
-  };
-
-  const workerLink = (): Promise<Link> => {
-    if (worker === undefined) {
-      throw new EngineError('INVALID_STATE', `engine "${manifest.name}" is not initialized: init opens its connection`, { retryable: false });
-    }
-    return worker;
-  };
-
-  /** Sends one engine method over the worker connection, with its operation context encoded. */
-  const send = async (method: EngineMethod, operation: OperationContext, params: object = {}): Promise<unknown> => {
-    const link = await workerLink();
-    return call(link, method, { ...params, operation: encodeOperation(link, operation) });
-  };
-
-  const observe: Engine['observe'] = has('engine/observe')
-    ? async (operation, observeOptions) =>
-        decodeSnapshot((await send('engine/observe', operation, observeOptions === undefined ? {} : { options: observeOptions })) as WireSnapshot)
-    : undefined;
-
-  let locate: Engine['locate'];
-  if (has('engine/locate')) {
-    locate = async (expression, operation) => ((await send('engine/locate', operation, { expression })) as { nodes: [] }).nodes;
-  } else if (options.resolveLocators === true && observe !== undefined) {
-    locate = async (expression, operation) => resolveExpression(expression, (await observe(operation)).root.children ?? []);
   }
-
-  const runLifecycle = has('lifecycle/prepare') || has('lifecycle/finish');
-  const sessionHook = (method: EngineMethod) => async (operation: OperationContext): Promise<void> => {
-    await send(method, operation);
-  };
-
-  const engine: Engine = {
-    name: manifest.name,
-    version: manifest.version,
-    spiVersion: manifest.spiVersion,
-    ...(manifest.platform === undefined ? {} : { platform: manifest.platform }),
-    ...(manifest.workers === undefined ? {} : { workers: manifest.workers }),
-    ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-    ...(options.fixtures === undefined ? {} : { fixtures: options.fixtures }),
-    ...(options.validateApp === undefined ? {} : { validateApp: options.validateApp }),
-    ...(observe === undefined ? {} : { observe }),
-    ...(locate === undefined ? {} : { locate }),
-    ...(has('engine/perform')
-      ? {
-          actions: manifest.actions ?? [],
-          ...(manifest.tapModifiers === true ? { tapModifiers: true } : {}),
-          perform: async (ref, action, operation) => {
-            await send('engine/perform', operation, { ref, action });
-          },
-        }
-      : {}),
-    ...(has('engine/performAt')
-      ? {
-          pointerActions: manifest.pointerActions ?? [],
-          performAt: async (point, action, operation) => {
-            await send('engine/performAt', operation, { point, action });
-          },
-        }
-      : {}),
-    ...(has('keyboard/type') && has('keyboard/press')
-      ? {
-          keyboard: {
-            type: async (text, { replace }, operation) => {
-              await send('keyboard/type', operation, { text, replace });
-            },
-            press: async (key, operation) => {
-              await send('keyboard/press', operation, { key });
-            },
-            ...(has('keyboard/dismiss')
-              ? {
-                  dismiss: async (operation: OperationContext) => {
-                    await send('keyboard/dismiss', operation);
-                  },
-                }
-              : {}),
-          },
-        }
-      : {}),
-    ...(has('state/capture') && has('state/restore')
-      ? {
-          state: {
-            capture: async (operation) => (await send('state/capture', operation)) as Awaited<ReturnType<NonNullable<Engine['state']>['capture']>>,
-            restore: async (state, operation) => {
-              await send('state/restore', operation, { state });
-            },
-          },
-        }
-      : {}),
-    ...(has('artifacts/screenshot')
-      ? {
-          artifacts: {
-            screenshot: async (label, operation) => {
-              const result = (await send('artifacts/screenshot', operation, label === undefined ? {} : { label })) as ScreenshotResult;
-              if ('path' in result) {
-                if (attempt === undefined) return result.path;
-                const relative = path.relative(attempt.artifactsDir, path.resolve(attempt.artifactsDir, result.path));
-                if (path.isAbsolute(result.path) || relative.startsWith('..') || path.isAbsolute(relative)) {
-                  throw new EngineError('ENGINE_FAILURE', `engine server wrote a screenshot outside the attempt's artifact directory: ${result.path}`, { retryable: false });
-                }
-                return result.path;
-              }
-              if (attempt === undefined) throw new EngineError('INVALID_STATE', 'screenshot outside an attempt', { retryable: false });
-              screenshots += 1;
-              const relative = path.join('screenshots', `${String(screenshots).padStart(3, '0')}-${(label ?? 'screenshot').replaceAll(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'screenshot'}.png`);
-              await mkdir(path.join(attempt.artifactsDir, 'screenshots'), { recursive: true });
-              await writeFile(path.join(attempt.artifactsDir, relative), Buffer.from(result.data, 'base64'));
-              return relative;
-            },
-            ...(has('artifacts/startVideo') && has('artifacts/stopVideo')
-              ? {
-                  startVideo: async (operation: OperationContext) => {
-                    await send('artifacts/startVideo', operation);
-                  },
-                  stopVideo: async (operation: OperationContext) =>
-                    ((await send('artifacts/stopVideo', operation)) as { segments: [] }).segments,
-                }
-              : {}),
-          },
-        }
-      : {}),
-    ...(has('session/open') || has('session/back') || has('session/restart') || has('session/reset')
-      ? {
-          session: {
-            ...(has('session/open')
-              ? {
-                  open: async (url: string, operation: OperationContext) => {
-                    await send('session/open', operation, { url });
-                  },
-                }
-              : {}),
-            ...(has('session/back') ? { back: sessionHook('session/back') } : {}),
-            ...(has('session/restart') ? { restart: sessionHook('session/restart') } : {}),
-            ...(has('session/reset') ? { reset: sessionHook('session/reset') } : {}),
-          },
-        }
-      : {}),
-    ...(runLifecycle
-      ? {
-          prepare: async (info) => {
-            const { signal, log, ...rest } = info;
-            const pending = open('run', { env: info.env, cwd: info.projectRoot, signal, app: info.app, log });
-            runs.set(info.targetName, pending);
-            const link = await pending;
-            if (!has('lifecycle/prepare')) return;
-            const result = await call(link, 'lifecycle/prepare', { ...rest, signal: link.signals.encode(signal) });
-            return result === null ? undefined : (result as Awaited<ReturnType<NonNullable<Engine['prepare']>>>);
-          },
-          finish: async (info) => {
-            const pending = runs.get(info.targetName);
-            runs.delete(info.targetName);
-            if (pending === undefined) return;
-            const link = await pending.catch(() => undefined);
-            if (link === undefined) return;
-            const deadline = Date.now() + info.timeoutMs;
-            try {
-              if (has('lifecycle/finish')) {
-                const { signal, log: _log, ...rest } = info;
-                await call(link, 'lifecycle/finish', { ...rest, signal: link.signals.encode(signal) });
-              }
-            } finally {
-              await close(link, Math.max(0, deadline - Date.now()));
-            }
-          },
-        }
-      : {}),
-    init: async (info) => {
-      const { signal, log, ...rest } = info;
-      worker = open('worker', { env: info.env, cwd: info.projectRoot, signal, app: info.app, log });
-      const link = await worker;
-      if (has('lifecycle/init')) await call(link, 'lifecycle/init', { ...rest, signal: link.signals.encode(signal) });
-    },
-    ...(has('lifecycle/startAttempt')
-      ? {
-          startAttempt: async (context) => {
-            attempt = context;
-            screenshots = 0;
-            const link = await workerLink();
-            await call(link, 'lifecycle/startAttempt', {
-              attemptId: context.attemptId,
-              artifactsDir: context.artifactsDir,
-              signal: link.signals.encode(context.signal),
-              screens: context.screen !== undefined,
-            });
-          },
-        }
-      : {}),
-    ...(has('lifecycle/settleAttempt')
-      ? {
-          settleAttempt: async (context) => {
-            const link = await workerLink();
-            await call(link, 'lifecycle/settleAttempt', { signal: link.signals.encode(context.signal), timeoutMs: context.timeoutMs });
-          },
-        }
-      : {}),
-    ...(has('lifecycle/endAttempt')
-      ? {
-          endAttempt: async (context) => {
-            try {
-              const link = await workerLink();
-              await call(link, 'lifecycle/endAttempt', { signal: link.signals.encode(context.signal), timeoutMs: context.timeoutMs });
-            } finally {
-              attempt = undefined;
-            }
-          },
-        }
-      : {}),
-    dispose: async (context) => {
-      const pending = worker;
-      worker = undefined;
-      attempt = undefined;
-      if (pending === undefined) return;
-      const link = await pending.catch(() => undefined);
-      if (link === undefined) return;
-      const deadline = Date.now() + context.timeoutMs;
-      try {
-        if (has('lifecycle/dispose')) {
-          await call(link, 'lifecycle/dispose', {
-            signal: link.signals.encode(context.signal),
-            timeoutMs: context.timeoutMs,
-            ...(context.reuseSignal === undefined ? {} : { reuseSignal: link.signals.encode(context.reuseSignal) }),
-          });
-        }
-      } finally {
-        await close(link, Math.max(0, Math.min(DEFAULT_CLOSE_MS, deadline - Date.now())));
-      }
-    },
-  };
-  const handle = defineEngine(engine);
-  clients.add(handle);
-  return handle;
 }
 
-/** Handles `connectEngine` made, which already speak the protocol. */
-const clients = new WeakSet<EngineHandle>();
-
-/** Whether `engine` is a protocol client from `connectEngine`, rather than an engine in this process. */
-export function isEngineClient(engine: EngineHandle): boolean {
-  return clients.has(engine);
+/** Sets a `member` path of `METHODS` on an engine being built: a top-level member, or a hook of a nested one. */
+function setMember(engine: Record<string, unknown>, member: string, value: unknown): void {
+  const [group, hook] = member.split('.') as [string, string | undefined];
+  if (hook === undefined) {
+    engine[group] = value;
+    return;
+  }
+  const nested = (engine[group] ??= {}) as Record<string, unknown>;
+  nested[hook] = value;
 }
-
-/** The runner version `initialize` reports; servers check the protocol version, never this. */
-const CLIENT_VERSION = packageVersion(import.meta.url, '../../../package.json', '0.0.0');
 
 function encodeOperation(link: Link, operation: OperationContext): WireOperation {
   return {
@@ -497,39 +516,14 @@ function encodeOperation(link: Link, operation: OperationContext): WireOperation
   };
 }
 
-/** Rejects with the signal's reason once it aborts, leaving `promise` to settle on its own. */
-function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) {
-    // Its settling is nobody's business any more, a rejection included.
-    promise.catch(() => {});
-    return Promise.reject(signal.reason);
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', onAbort, { once: true });
-    promise.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (cause: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(cause);
-      },
-    );
-  });
-}
-
 /**
- * Mints one id per `AbortSignal` a connection carries, sends `$/abort` when
- * it aborts, and `$/release` once the signal is garbage, so the server keeps
- * no state for a signal the client can no longer send.
+ * Mints one id per `AbortSignal` a connection carries and sends `$/abort`
+ * when it aborts. The server forgets an id when its signal aborts or when
+ * the attempt it was first seen in ends.
  */
 class SignalEncoder {
   readonly #connection: Connection;
   readonly #ids = new WeakMap<AbortSignal, number>();
-  readonly #released: number[] = [];
-  readonly #registry = new FinalizationRegistry<number>((id) => this.#release(id));
   #next = 1;
 
   constructor(connection: Connection) {
@@ -544,122 +538,14 @@ class SignalEncoder {
       this.#ids.set(signal, id);
       if (!signal.aborted) {
         const abortedId = id;
-        const connection = this.#connection;
         signal.addEventListener(
           'abort',
-          () => {
-            const reason = encodeAbortReason(signal.reason);
-            connection.notify('$/abort', { id: abortedId, ...(reason === undefined ? {} : { reason }) });
-          },
+          () => this.#connection.notify('$/abort', obj({ id: abortedId, reason: encodeAbortReason(signal.reason) })),
           { once: true },
         );
-        this.#registry.register(signal, id);
       }
     }
     if (!signal.aborted) return { id };
-    const reason = encodeAbortReason(signal.reason);
-    return { id, aborted: true, ...(reason === undefined ? {} : { reason }) };
+    return obj({ id, aborted: true as const, reason: encodeAbortReason(signal.reason) });
   }
-
-  #release(id: number): void {
-    this.#released.push(id);
-    if (this.#released.length > 1) return;
-    queueMicrotask(() => {
-      this.#connection.notify('$/release', { ids: this.#released.splice(0) });
-    });
-  }
-}
-
-/** Methods that make one engine member only together: each needs the one beside it. */
-const METHOD_DEPENDENCIES: readonly (readonly [EngineMethod, EngineMethod])[] = [
-  ['keyboard/type', 'keyboard/press'],
-  ['keyboard/press', 'keyboard/type'],
-  ['keyboard/dismiss', 'keyboard/type'],
-  ['state/capture', 'state/restore'],
-  ['state/restore', 'state/capture'],
-  ['artifacts/startVideo', 'artifacts/stopVideo'],
-  ['artifacts/stopVideo', 'artifacts/startVideo'],
-  ['artifacts/startVideo', 'artifacts/screenshot'],
-];
-
-/** Validates a declared manifest at config load, the way `defineEngine` validates an engine. */
-function checkManifest(manifest: EngineManifest): EngineManifest {
-  const invalid = (detail: string): ConfigurationError =>
-    new ConfigurationError('INVALID_CONFIG', `connectEngine: ${detail}`);
-  if (typeof manifest !== 'object' || manifest === null) throw invalid('manifest must be an object');
-  if (typeof manifest.name !== 'string' || manifest.name.trim() === '') throw invalid('manifest.name must be a non-empty string');
-  if (typeof manifest.version !== 'string' || manifest.version.trim() === '') throw invalid('manifest.version must be a non-empty string');
-  if (manifest.spiVersion !== ENGINE_SPI_VERSION) {
-    throw invalid(`manifest.spiVersion ${String(manifest.spiVersion)} is not ${ENGINE_SPI_VERSION}`);
-  }
-  if (!Array.isArray(manifest.methods)) throw invalid('manifest.methods must be an array of engine methods');
-  const known: readonly string[] = ENGINE_METHODS;
-  const seen = new Set<string>();
-  for (const method of manifest.methods) {
-    if (!known.includes(method)) throw invalid(`manifest.methods names unknown method ${JSON.stringify(method)}`);
-    if (seen.has(method)) throw invalid(`manifest.methods lists "${method}" twice`);
-    seen.add(method);
-  }
-  const kinds = (member: 'actions' | 'pointerActions', allowed: readonly string[]): void => {
-    const value = manifest[member];
-    if (value === undefined) return;
-    if (!Array.isArray(value)) throw invalid(`manifest.${member} must be an array`);
-    for (const kind of value) if (!allowed.includes(kind)) throw invalid(`manifest.${member} names unknown kind ${JSON.stringify(kind)}`);
-  };
-  kinds('actions', LOCATOR_ACTION_KINDS);
-  kinds('pointerActions', POINTER_ACTION_KINDS);
-  if (manifest.actions !== undefined && !seen.has('engine/perform')) throw invalid('manifest.actions needs "engine/perform"');
-  if (manifest.tapModifiers === true && !seen.has('engine/perform')) throw invalid('manifest.tapModifiers needs "engine/perform"');
-  if (manifest.pointerActions !== undefined && !seen.has('engine/performAt')) throw invalid('manifest.pointerActions needs "engine/performAt"');
-  // A member made of several methods needs all of them; half of one would
-  // otherwise vanish from the handle instead of failing here.
-  for (const [method, required] of METHOD_DEPENDENCIES) {
-    if (seen.has(method) && !seen.has(required)) throw invalid(`manifest.methods lists "${method}" without "${required}"`);
-  }
-  return manifest;
-}
-
-/** Names the fields where the server's manifest differs from the declared one, or undefined when they agree. */
-function manifestMismatch(declared: EngineManifest, announced: EngineManifest | undefined): string | undefined {
-  if (announced === undefined) return 'the server sent none';
-  const canonical = (manifest: EngineManifest): Record<string, string> => ({
-    name: manifest.name,
-    version: manifest.version,
-    spiVersion: String(manifest.spiVersion),
-    platform: manifest.platform ?? '(none)',
-    workers: manifest.workers === undefined ? '(none)' : String(manifest.workers),
-    methods: [...manifest.methods].toSorted().join(', '),
-    actions: [...(manifest.actions ?? [])].toSorted().join(', '),
-    pointerActions: [...(manifest.pointerActions ?? [])].toSorted().join(', '),
-    tapModifiers: String(manifest.tapModifiers === true),
-  });
-  const expected = canonical(declared);
-  const actual = canonical(announced);
-  const fields = Object.keys(expected).filter((field) => expected[field] !== actual[field]);
-  if (fields.length === 0) return undefined;
-  return fields.map((field) => `${field} is "${actual[field]}", declared "${expected[field]}"`).join('; ');
-}
-
-/** The client each in-process engine is served through, so every config load gets the same one. */
-const loopbacks = new WeakMap<EngineHandle, EngineHandle>();
-
-/**
- * `engine` served in this process over the protocol: the client handle every
- * target runs on. Every engine member crosses the wire; fixtures, the app
- * check, and the declared secrets stay the engine's own, since they belong
- * to the client half of any engine. One engine always gets the same client,
- * so a handle two targets or two config loads share stays one instance.
- */
-export function loopbackEngine(engine: EngineHandle): EngineHandle {
-  const known = loopbacks.get(engine);
-  if (known !== undefined) return known;
-  const client = connectEngine({
-    manifest: describeEngine(engine),
-    transport: loopbackTransport(engine),
-    ...(engine.secrets === undefined ? {} : { secrets: engine.secrets }),
-    ...(engine.fixtures === undefined ? {} : { fixtures: engine.fixtures }),
-    ...(engine.validateApp === undefined ? {} : { validateApp: engine.validateApp }),
-  });
-  loopbacks.set(engine, client);
-  return client;
 }

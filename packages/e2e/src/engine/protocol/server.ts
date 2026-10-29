@@ -5,27 +5,34 @@
  * implements the same messages; this file is their reference implementation.
  */
 
+import { obj } from '../../internal/objects.ts';
 import { ENGINE_SPI_VERSION } from '../contract.ts';
 import { isEngineHandle } from '../manifest.ts';
 import type {
   EngineAttemptContext,
+  EngineFinishInfo,
   EngineHandle,
+  EngineInitInfo,
+  EnginePrepareInfo,
   EngineSnapshot,
   OperationContext,
 } from '../index.ts';
 import type { Secret } from '../../types.ts';
 import { Connection, RPC_ERRORS, RpcError, type MessageStreams } from './connection.ts';
+import { describeEngine } from './manifest.ts';
 import {
+  ENGINE_METHODS,
   ENGINE_PROTOCOL_VERSION,
+  METHODS,
   decodeError,
   encodeError,
   encodeSnapshot,
+  engineMember,
   type AbortParams,
-  type EngineManifest,
-  type EngineMethod,
   type InitializeParams,
   type InitializeResult,
-  type ReleaseParams,
+  type LifecycleMethod,
+  type OperationMethod,
   type WireCleanup,
   type WireOperation,
   type WireSignal,
@@ -34,50 +41,19 @@ import {
 /** Builds the engine to serve from the options the client passed to `initialize`. */
 type EngineFactory = (initializationOptions: unknown) => EngineHandle | Promise<EngineHandle>;
 
-/**
- * Describes an engine as the manifest a server returns from `initialize`:
- * its static members and the methods its declared members answer.
- */
-export function describeEngine(engine: EngineHandle): EngineManifest {
-  const methods: EngineMethod[] = [];
-  const declare = (method: EngineMethod, member: unknown): void => {
-    if (member !== undefined) methods.push(method);
-  };
-  declare('engine/observe', engine.observe);
-  declare('engine/locate', engine.locate);
-  declare('engine/perform', engine.perform);
-  declare('engine/performAt', engine.performAt);
-  declare('keyboard/type', engine.keyboard?.type);
-  declare('keyboard/press', engine.keyboard?.press);
-  declare('keyboard/dismiss', engine.keyboard?.dismiss);
-  declare('state/capture', engine.state?.capture);
-  declare('state/restore', engine.state?.restore);
-  declare('artifacts/screenshot', engine.artifacts?.screenshot);
-  declare('artifacts/startVideo', engine.artifacts?.startVideo);
-  declare('artifacts/stopVideo', engine.artifacts?.stopVideo);
-  declare('session/open', engine.session?.open);
-  declare('session/back', engine.session?.back);
-  declare('session/restart', engine.session?.restart);
-  declare('session/reset', engine.session?.reset);
-  declare('lifecycle/prepare', engine.prepare);
-  declare('lifecycle/finish', engine.finish);
-  declare('lifecycle/init', engine.init);
-  declare('lifecycle/startAttempt', engine.startAttempt);
-  declare('lifecycle/settleAttempt', engine.settleAttempt);
-  declare('lifecycle/endAttempt', engine.endAttempt);
-  declare('lifecycle/dispose', engine.dispose);
-  return {
-    name: engine.name,
-    version: engine.version,
-    spiVersion: engine.spiVersion,
-    ...(engine.platform === undefined ? {} : { platform: engine.platform }),
-    ...(engine.workers === undefined ? {} : { workers: engine.workers }),
-    methods,
-    ...(engine.actions === undefined ? {} : { actions: engine.actions }),
-    ...(engine.pointerActions === undefined ? {} : { pointerActions: engine.pointerActions }),
-    ...(engine.tapModifiers === true ? { tapModifiers: true } : {}),
-  };
+/** A hook's info on the wire: its signal as a wire signal, its `log` routed back to the client. */
+type WireInfo<T> = Omit<T, 'signal' | 'log'> & { readonly signal: WireSignal };
+
+/** Params of `lifecycle/startAttempt`. */
+interface StartAttemptParams {
+  readonly attemptId: string;
+  readonly artifactsDir: string;
+  readonly signal: WireSignal;
+  readonly screens: boolean;
 }
+
+/** Answers one lifecycle method: decodes its params into the hook's argument and calls the hook with it. */
+type LifecycleHandler = (hook: (argument: unknown) => Promise<unknown>, params: unknown) => Promise<unknown>;
 
 /**
  * Serves one engine over one connection until the client sends `exit` or
@@ -95,9 +71,11 @@ export function serveEngine(
   return new EngineServer(engine, streams).closed;
 }
 
-/** The engine context of the attempt a worker connection runs, between `startAttempt` and `endAttempt`. */
+/** The attempt a worker connection runs, between `startAttempt` and `endAttempt`. */
 interface ServedAttempt {
   readonly attemptId: string;
+  /** Ids of the signals first seen during the attempt, forgotten when it ends. */
+  readonly signals: Set<number>;
 }
 
 class EngineServer {
@@ -140,9 +118,6 @@ class EngineServer {
           this.#signals.get(id)?.abort(reason === undefined ? undefined : decodeError(reason));
           this.#signals.delete(id);
         },
-        '$/release': (params) => {
-          for (const id of (params as ReleaseParams).ids) this.#signals.delete(id);
-        },
       },
     });
   }
@@ -164,111 +139,63 @@ class EngineServer {
     return { protocolVersion: ENGINE_PROTOCOL_VERSION, manifest: describeEngine(this.#engine) };
   }
 
-  /** Registers one request handler per declared member of `engine`. */
+  /** Registers one request handler per method `engine` answers. */
   #register(engine: EngineHandle): void {
-    const on = <P>(method: EngineMethod, member: unknown, handler: (params: P) => Promise<unknown>): void => {
-      if (member === undefined) return;
-      this.#connection.onRequest(method, (params) => handler(params as P));
-    };
-    const { observe, locate, perform, performAt, keyboard, state, artifacts, session } = engine;
-    on<{ operation: WireOperation; options?: Parameters<NonNullable<typeof observe>>[1] }>(
-      'engine/observe',
-      observe,
-      async ({ operation, options }) => encodeSnapshot(await observe!(this.#operation(operation), options)),
-    );
-    on<{ expression: Parameters<NonNullable<typeof locate>>[0]; operation: WireOperation }>(
-      'engine/locate',
-      locate,
-      async ({ expression, operation }) => ({ nodes: await locate!(expression, this.#operation(operation)) }),
-    );
-    on<{ ref: Parameters<NonNullable<typeof perform>>[0]; action: Parameters<NonNullable<typeof perform>>[1]; operation: WireOperation }>(
-      'engine/perform',
-      perform,
-      ({ ref, action, operation }) => perform!(ref, action, this.#operation(operation)),
-    );
-    on<{ point: Parameters<NonNullable<typeof performAt>>[0]; action: Parameters<NonNullable<typeof performAt>>[1]; operation: WireOperation }>(
-      'engine/performAt',
-      performAt,
-      ({ point, action, operation }) => performAt!(point, action, this.#operation(operation)),
-    );
-    on<{ text: string; replace: boolean; operation: WireOperation }>(
-      'keyboard/type',
-      keyboard?.type,
-      ({ text, replace, operation }) => keyboard!.type(text, { replace }, this.#operation(operation)),
-    );
-    on<{ key: string; operation: WireOperation }>(
-      'keyboard/press',
-      keyboard?.press,
-      ({ key, operation }) => keyboard!.press(key, this.#operation(operation)),
-    );
-    on<{ operation: WireOperation }>('keyboard/dismiss', keyboard?.dismiss, ({ operation }) => keyboard!.dismiss!(this.#operation(operation)));
-    on<{ operation: WireOperation }>('state/capture', state?.capture, ({ operation }) => state!.capture(this.#operation(operation)));
-    on<{ state: Parameters<NonNullable<typeof state>['restore']>[0]; operation: WireOperation }>(
-      'state/restore',
-      state?.restore,
-      ({ state: snapshot, operation }) => state!.restore(snapshot, this.#operation(operation)),
-    );
-    on<{ label?: string; operation: WireOperation }>(
-      'artifacts/screenshot',
-      artifacts?.screenshot,
-      async ({ label, operation }) => ({ path: await artifacts!.screenshot(label, this.#operation(operation)) }),
-    );
-    on<{ operation: WireOperation }>('artifacts/startVideo', artifacts?.startVideo, ({ operation }) => artifacts!.startVideo!(this.#operation(operation)));
-    on<{ operation: WireOperation }>(
-      'artifacts/stopVideo',
-      artifacts?.stopVideo,
-      async ({ operation }) => ({ segments: await artifacts!.stopVideo!(this.#operation(operation)) }),
-    );
-    on<{ url: string; operation: WireOperation }>('session/open', session?.open, ({ url, operation }) => session!.open!(url, this.#operation(operation)));
-    on<{ operation: WireOperation }>('session/back', session?.back, ({ operation }) => session!.back!(this.#operation(operation)));
-    on<{ operation: WireOperation }>('session/restart', session?.restart, ({ operation }) => session!.restart!(this.#operation(operation)));
-    on<{ operation: WireOperation }>('session/reset', session?.reset, ({ operation }) => session!.reset!(this.#operation(operation)));
-    this.#registerLifecycle(engine);
+    const lifecycle = this.#lifecycleHandlers();
+    for (const method of ENGINE_METHODS) {
+      const spec = METHODS[method];
+      const member = engineMember(engine, spec.member);
+      if (member === undefined) continue;
+      this.#connection.onRequest(
+        method,
+        spec.kind === 'operation'
+          ? async (params) => encodeResult(spec, await member(...this.#operationArgs(spec, params)))
+          : (params) => lifecycle[spec.member](member, params),
+      );
+    }
   }
 
-  #registerLifecycle(engine: EngineHandle): void {
-    const on = <P>(method: EngineMethod, member: unknown, handler: (params: P) => Promise<unknown>): void => {
-      if (member === undefined) return;
-      this.#connection.onRequest(method, (params) => handler(params as P));
-    };
+  /** The member's arguments, in order, read off its params by name. */
+  #operationArgs(spec: OperationMethod, params: unknown): unknown[] {
+    const named = params as Readonly<Record<string, unknown>>;
+    return spec.args.map((name) => (name === 'operation' ? this.#operation(named['operation'] as WireOperation) : named[name]));
+  }
+
+  #lifecycleHandlers(): Readonly<Record<LifecycleMethod['member'], LifecycleHandler>> {
     const log = (line: string): void => this.#connection.notify('engine/log', { line });
-    type PrepareParams = Omit<Parameters<NonNullable<EngineHandle['prepare']>>[0], 'signal' | 'log'> & { signal: WireSignal };
-    on<PrepareParams>('lifecycle/prepare', engine.prepare, async ({ signal, ...info }) =>
-      (await engine.prepare!({ ...info, signal: this.#signal(signal), log })) ?? null,
-    );
-    type FinishParams = Omit<Parameters<NonNullable<EngineHandle['finish']>>[0], 'signal' | 'log'> & { signal: WireSignal };
-    on<FinishParams>('lifecycle/finish', engine.finish, ({ signal, ...info }) => engine.finish!({ ...info, signal: this.#signal(signal), log }));
-    type InitParams = Omit<Parameters<NonNullable<EngineHandle['init']>>[0], 'signal' | 'log'> & { signal: WireSignal };
-    on<InitParams>('lifecycle/init', engine.init, ({ signal, ...info }) => engine.init!({ ...info, signal: this.#signal(signal), log }));
-    on<{ attemptId: string; artifactsDir: string; signal: WireSignal; screens: boolean }>(
-      'lifecycle/startAttempt',
-      engine.startAttempt,
-      ({ attemptId, artifactsDir, signal, screens }) => {
-        this.#attempt = { attemptId };
-        return engine.startAttempt!(this.#attemptContext(attemptId, artifactsDir, this.#signal(signal), screens));
+    const info = <T>(params: unknown): unknown => {
+      const { signal, ...rest } = params as WireInfo<T>;
+      return { ...rest, signal: this.#signal(signal), log };
+    };
+    return {
+      prepare: (hook, params) => hook(info<EnginePrepareInfo>(params)),
+      finish: (hook, params) => hook(info<EngineFinishInfo>(params)),
+      init: (hook, params) => hook(info<EngineInitInfo>(params)),
+      startAttempt: (hook, params) => {
+        const { attemptId, artifactsDir, signal, screens } = params as StartAttemptParams;
+        this.#attempt = { attemptId, signals: new Set() };
+        return hook(this.#attemptContext(attemptId, artifactsDir, this.#signal(signal), screens));
       },
-    );
-    on<WireCleanup>('lifecycle/settleAttempt', engine.settleAttempt, (cleanup) => engine.settleAttempt!(this.#cleanup(cleanup)));
-    on<WireCleanup>('lifecycle/endAttempt', engine.endAttempt, async (cleanup) => {
-      try {
-        await engine.endAttempt!(this.#cleanup(cleanup));
-      } finally {
-        this.#attempt = undefined;
-      }
-    });
-    on<WireCleanup & { reuseSignal?: WireSignal }>('lifecycle/dispose', engine.dispose, ({ reuseSignal, ...cleanup }) =>
-      engine.dispose!({
-        ...this.#cleanup(cleanup),
-        ...(reuseSignal === undefined ? {} : { reuseSignal: this.#signal(reuseSignal) }),
-      }),
-    );
+      settleAttempt: (hook, params) => hook(this.#cleanup(params as WireCleanup)),
+      endAttempt: async (hook, params) => {
+        try {
+          return await hook(this.#cleanup(params as WireCleanup));
+        } finally {
+          for (const id of this.#attempt?.signals ?? []) this.#signals.delete(id);
+          this.#attempt = undefined;
+        }
+      },
+      dispose: (hook, params) => {
+        const { reuseSignal, ...cleanup } = params as WireCleanup & { readonly reuseSignal?: WireSignal };
+        return hook(obj({ ...this.#cleanup(cleanup), reuseSignal: reuseSignal === undefined ? undefined : this.#signal(reuseSignal) }));
+      },
+    };
   }
 
   /** The attempt context an engine's `startAttempt` receives, its callbacks routed to the client. */
   #attemptContext(attemptId: string, artifactsDir: string, signal: AbortSignal, screens: boolean): EngineAttemptContext {
-    const live = (): boolean => this.#attempt?.attemptId === attemptId;
     const send = (method: string, params: object): void => {
-      if (live()) this.#connection.notify(method, { attemptId, ...params });
+      if (this.#attempt?.attemptId === attemptId) this.#connection.notify(method, { attemptId, ...params });
     };
     return {
       attemptId,
@@ -311,14 +238,26 @@ class EngineServer {
     return { signal: this.#signal(wire.signal), timeoutMs: wire.timeoutMs };
   }
 
-  /** The local signal for a wire signal: one per id, so an engine comparing signals sees the client's identity. */
+  /**
+   * The local signal for a wire signal: one per id, so an engine comparing
+   * signals sees the client's identity. One first seen during an attempt is
+   * forgotten when the attempt ends; the rest live as long as the connection.
+   */
   #signal(wire: WireSignal): AbortSignal {
     if (wire.aborted === true) return AbortSignal.abort(wire.reason === undefined ? undefined : decodeError(wire.reason));
     let controller = this.#signals.get(wire.id);
     if (controller === undefined) {
       controller = new AbortController();
       this.#signals.set(wire.id, controller);
+      this.#attempt?.signals.add(wire.id);
     }
     return controller.signal;
   }
+}
+
+/** An operation's result as JSON: a snapshot's pixels as base64, a screenshot as the path the engine wrote. */
+function encodeResult(spec: OperationMethod, value: unknown): unknown {
+  if (spec.result === 'snapshot') return encodeSnapshot(value as EngineSnapshot);
+  if (spec.result === 'screenshot') return { path: value };
+  return value;
 }

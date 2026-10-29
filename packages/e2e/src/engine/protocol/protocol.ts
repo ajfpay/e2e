@@ -15,41 +15,77 @@
 
 import { E2EError, ConfigurationError, ERROR_CATEGORIES, InfrastructureError, TestError, asEngineError, isE2EError } from '../../internal/errors.ts';
 import { ENGINE_ERROR_CODES, EngineError, type EngineErrorCode, type EngineSpiVersion, type LocatorActionKind, type PointerActionKind } from '../contract.ts';
-import type { EngineSnapshot } from '../index.ts';
+import type { Engine, EngineSnapshot } from '../index.ts';
 import { RPC_ERRORS, type RpcErrorObject } from './connection.ts';
 
 /** The protocol version this runner speaks; `initialize` refuses any other. */
 export const ENGINE_PROTOCOL_VERSION = 1;
 
-/** Every engine method a server may answer, one per engine member. */
-export const ENGINE_METHODS = [
-  'engine/observe',
-  'engine/locate',
-  'engine/perform',
-  'engine/performAt',
-  'keyboard/type',
-  'keyboard/press',
-  'keyboard/dismiss',
-  'state/capture',
-  'state/restore',
-  'artifacts/screenshot',
-  'artifacts/startVideo',
-  'artifacts/stopVideo',
-  'session/open',
-  'session/back',
-  'session/restart',
-  'session/reset',
-  'lifecycle/prepare',
-  'lifecycle/finish',
-  'lifecycle/init',
-  'lifecycle/startAttempt',
-  'lifecycle/settleAttempt',
-  'lifecycle/endAttempt',
-  'lifecycle/dispose',
-] as const;
+/** A method that carries one engine operation: the member it calls and that member's arguments by name, in order. */
+export interface OperationMethod {
+  readonly kind: 'operation';
+  /** The engine member: a top-level one (`observe`) or a hook of a nested one (`keyboard.type`). */
+  readonly member: string;
+  /** The member's arguments, named as the params carry them; `operation` is its `OperationContext`. */
+  readonly args: readonly string[];
+  /** A result that is not plain JSON: a snapshot's pixels cross as base64, a screenshot may cross as its bytes. */
+  readonly result?: 'snapshot' | 'screenshot';
+}
+
+/** A method that carries one lifecycle hook, whose single argument is an info or cleanup object. */
+export interface LifecycleMethod {
+  readonly kind: 'lifecycle';
+  readonly member: 'prepare' | 'finish' | 'init' | 'startAttempt' | 'settleAttempt' | 'endAttempt' | 'dispose';
+}
+
+const operation = (member: string, args: readonly string[], result?: OperationMethod['result']): OperationMethod =>
+  result === undefined ? { kind: 'operation', member, args } : { kind: 'operation', member, args, result };
+
+const lifecycle = (member: LifecycleMethod['member']): LifecycleMethod => ({ kind: 'lifecycle', member });
+
+/**
+ * Every engine method a server may answer, one per engine member: the one
+ * table the manifest, the client, and the server are all read off.
+ */
+export const METHODS = {
+  'engine/observe': operation('observe', ['operation', 'options'], 'snapshot'),
+  'engine/locate': operation('locate', ['expression', 'operation']),
+  'engine/perform': operation('perform', ['ref', 'action', 'operation']),
+  'engine/performAt': operation('performAt', ['point', 'action', 'operation']),
+  'keyboard/type': operation('keyboard.type', ['text', 'options', 'operation']),
+  'keyboard/press': operation('keyboard.press', ['key', 'operation']),
+  'keyboard/dismiss': operation('keyboard.dismiss', ['operation']),
+  'state/capture': operation('state.capture', ['operation']),
+  'state/restore': operation('state.restore', ['state', 'operation']),
+  'artifacts/screenshot': operation('artifacts.screenshot', ['label', 'operation'], 'screenshot'),
+  'artifacts/startVideo': operation('artifacts.startVideo', ['operation']),
+  'artifacts/stopVideo': operation('artifacts.stopVideo', ['operation']),
+  'session/open': operation('session.open', ['url', 'operation']),
+  'session/back': operation('session.back', ['operation']),
+  'session/restart': operation('session.restart', ['operation']),
+  'session/reset': operation('session.reset', ['operation']),
+  'lifecycle/prepare': lifecycle('prepare'),
+  'lifecycle/finish': lifecycle('finish'),
+  'lifecycle/init': lifecycle('init'),
+  'lifecycle/startAttempt': lifecycle('startAttempt'),
+  'lifecycle/settleAttempt': lifecycle('settleAttempt'),
+  'lifecycle/endAttempt': lifecycle('endAttempt'),
+  'lifecycle/dispose': lifecycle('dispose'),
+} as const satisfies Readonly<Record<string, OperationMethod | LifecycleMethod>>;
 
 /** One engine method. */
-export type EngineMethod = (typeof ENGINE_METHODS)[number];
+export type EngineMethod = keyof typeof METHODS;
+
+/** Every engine method a server may answer, in protocol order. */
+export const ENGINE_METHODS = Object.freeze(Object.keys(METHODS)) as readonly EngineMethod[];
+
+/** An engine member's function, read off a `member` path of `METHODS`; undefined when the engine lacks it. */
+export function engineMember(engine: Engine, member: string): ((...args: unknown[]) => Promise<unknown>) | undefined {
+  const [group, hook] = member.split('.') as [keyof Engine, string | undefined];
+  const owner: unknown = hook === undefined ? engine : engine[group];
+  const fn = typeof owner === 'object' && owner !== null ? (owner as Record<string, unknown>)[hook ?? group] : undefined;
+  return typeof fn === 'function' ? (fn as (...args: unknown[]) => Promise<unknown>) : undefined;
+}
 
 /**
  * What an engine server is, as JSON: the static members of an engine and
@@ -151,11 +187,6 @@ export function encodeAbortReason(reason: unknown): RpcErrorObject | undefined {
   return reason === undefined ? undefined : encodeError(reason);
 }
 
-/** Params of `$/release`: signal ids the client will never send again. */
-export interface ReleaseParams {
-  readonly ids: readonly number[];
-}
-
 /** Encodes a snapshot for the wire. */
 export function encodeSnapshot(snapshot: EngineSnapshot): WireSnapshot {
   const { pixels, ...rest } = snapshot;
@@ -194,7 +225,7 @@ export function encodeError(cause: unknown): RpcErrorObject {
     return { code: RPC_ERRORS.engineError, message, data: { type: 'engine', code: engine.code, retryable: engine.retryable } };
   }
   if (isE2EError(cause)) {
-    const details = (cause as { details?: E2EError['details'] }).details;
+    const { details } = cause;
     return {
       code: RPC_ERRORS.engineError,
       message,

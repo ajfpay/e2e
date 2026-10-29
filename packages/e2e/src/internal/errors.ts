@@ -273,6 +273,7 @@ export function isE2EError(value: unknown): value is Error & {
   category: ErrorCategory;
   code: string;
   retryable: boolean;
+  details?: ErrorDetails | undefined;
 } {
   return (
     value instanceof Error &&

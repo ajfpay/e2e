@@ -10,7 +10,8 @@ icon: "gear"
 such as a browser or simulator. An engine implements shared types for nodes,
 locators, actions, and errors. `defineEngine` validates and freezes the
 implementation, derives its capabilities, and returns a handle for `targets`
-in the config. Use `test.extend` fixtures for resources outside the UI, such
+in the config. The harness drives the handle over the
+[engine protocol](/reference/engine-protocol), served in the runner's process. Use `test.extend` fixtures for resources outside the UI, such
 as APIs or databases.
 
 This sketch assumes a `connect` adapter for the platform:

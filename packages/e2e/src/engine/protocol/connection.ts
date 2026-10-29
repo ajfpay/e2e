@@ -65,6 +65,8 @@ export interface ConnectionOptions {
   readonly notifications?: Readonly<Record<string, NotificationHandler>>;
   /** Encodes a handler failure; defaults to an internal error carrying the message. */
   readonly encodeError?: ErrorEncoder;
+  /** Called with what a notification handler threw: a notification has no reply to carry it. */
+  readonly onNotificationError?: (method: string, cause: unknown) => void;
   /** Called once when the input ends or fails, after every pending request was rejected. */
   readonly onClose?: (reason: string) => void;
 }
@@ -89,6 +91,7 @@ export class Connection {
   readonly #requests: Map<string, RequestHandler>;
   readonly #notifications: Map<string, NotificationHandler>;
   readonly #encodeError: ErrorEncoder;
+  readonly #onNotificationError: ((method: string, cause: unknown) => void) | undefined;
   readonly #onClose: ((reason: string) => void) | undefined;
   readonly #pending = new Map<RequestId, Pending>();
   #nextId = 1;
@@ -102,6 +105,7 @@ export class Connection {
     this.#requests = new Map(Object.entries(options.requests ?? {}));
     this.#notifications = new Map(Object.entries(options.notifications ?? {}));
     this.#encodeError = options.encodeError ?? defaultEncodeError;
+    this.#onNotificationError = options.onNotificationError;
     this.#onClose = options.onClose;
     streams.input.on('data', (chunk: Buffer | string) => this.#receive(chunk));
     streams.input.once('end', () => this.close('the peer closed the connection'));
@@ -166,8 +170,12 @@ export class Connection {
         const headerEnd = buffer.indexOf(HEADER_DELIMITER);
         if (headerEnd === -1) return;
         const length = contentLength(buffer.subarray(0, headerEnd).toString('ascii'));
-        if (length === undefined || length > MAX_MESSAGE_BYTES) {
+        if (length === undefined) {
           this.close('the peer sent a message without a valid Content-Length header');
+          return;
+        }
+        if (length > MAX_MESSAGE_BYTES) {
+          this.close(`the peer sent a ${String(length)}-byte message, over the ${String(MAX_MESSAGE_BYTES)}-byte limit`);
           return;
         }
         this.#bodyLength = length;
@@ -214,12 +222,11 @@ export class Connection {
     }
     if (typeof method === 'string') {
       if (!hasId) {
-        // A notification has no reply to carry a failure, and one that is
-        // malformed must not take the process down with it.
+        // A malformed notification must not take the process down with it.
         try {
           this.#notifications.get(method)?.(params);
-        } catch {
-          // Dropped, as an unknown notification is.
+        } catch (cause) {
+          this.#onNotificationError?.(method, cause);
         }
         return;
       }

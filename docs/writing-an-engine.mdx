@@ -11,6 +11,11 @@ the `e2e/engine` contract. Write one to test a desktop app, a TV, or another
 platform. `@e2e-dev/web` and `@e2e-dev/mobile` use the same public
 `defineEngine` API and are complete examples.
 
+The harness drives every engine over the
+[engine protocol](/reference/engine-protocol), as JSON-RPC messages.
+`defineEngine` is the TypeScript way to write one, served in the runner's
+process. In another language, implement the protocol's messages.
+
 Engines drive user interfaces only. For an inbox, a database, or a test API,
 write a fixture with [`test.extend`](/reference/test#your-own-fixtures).
 
@@ -248,7 +253,10 @@ Throw `EngineError` with a code from the
 
 An engine can contribute fixtures such as `browser` or `device`. Wrap their
 methods with `context.fixture` to record each call as a `<fixture>.<method>`
-step, with its own artifacts and failures.
+step, with its own artifacts and failures. Fixtures run in the runner's
+process, beside the test. An engine in another process gets them from
+[`connectEngine`](/reference/engine-protocol#connectengine)'s `fixtures`,
+which reach it through its engine members.
 
 ```ts
 fixtures: {

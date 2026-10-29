@@ -4,8 +4,8 @@
  * afterwards, and nothing else.
  */
 
-import { isEngineHandle, type EngineHandle } from '../engine/index.ts';
-import { isEngineClient, loopbackEngine } from '../engine/protocol/client.ts';
+import { isEngineHandle } from '../engine/index.ts';
+import { protocolEngine, type EngineClientHandle } from '../engine/protocol/client.ts';
 import { ConfigurationError } from '../internal/errors.ts';
 import type { ResolvedRecording } from '../internal/recording-modes.ts';
 import type { Target } from '../types.ts';
@@ -20,8 +20,12 @@ export interface ResolvedTarget {
   readonly name: string;
   readonly index: number;
   readonly platform: string;
-  /** Validated engine; undefined for an agent-tools-only target. */
-  readonly engine: EngineHandle | undefined;
+  /**
+   * The engine as the harness drives it, always a protocol client (an
+   * engine in this process is served over `loopbackTransport`); undefined
+   * for an agent-tools-only target.
+   */
+  readonly engine: EngineClientHandle | undefined;
   /** The app under test, on the run's port once it was assigned. */
   readonly app: ResolvedApp;
   /** The app as declared and checked: what `bindTargets` resolves again on the run's port, and what the digest reads. */
@@ -90,7 +94,7 @@ export function resolveTargets(
     }
     seen.add(name);
     if (target.name === undefined) defaulted.add(name);
-    const engine = target.engine === undefined || isEngineClient(target.engine) ? target.engine : loopbackEngine(target.engine);
+    const engine = target.engine === undefined ? undefined : protocolEngine(target.engine);
     const declaredApp = checkTargetApp(name, engine, target.app);
     return {
       name,

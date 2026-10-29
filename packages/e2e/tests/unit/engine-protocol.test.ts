@@ -25,7 +25,7 @@ import {
 } from '../../src/engine/index.ts';
 import { resolveConfig } from '../../src/config/resolve.ts';
 import { ConfigurationError, TestTimeoutError } from '../../src/internal/errors.ts';
-import { isEngineClient } from '../../src/engine/protocol/client.ts';
+import { protocolEngine } from '../../src/engine/protocol/client.ts';
 import { Connection } from '../../src/engine/protocol/connection.ts';
 import type { EngineTransport } from '../../src/engine/protocol/transport.ts';
 import { secretHandle } from '../../src/secrets.ts';
@@ -178,6 +178,52 @@ describe('engine protocol', () => {
   it('refuses a call before init instead of opening a connection on its own', async () => {
     const { remote } = overLoopback(toy());
     await expect(remote.observe!(operation())).rejects.toMatchObject({ name: 'EngineError', code: 'INVALID_STATE' });
+  });
+
+  it('serves a second init on its own connection and disposes the oldest first, as a handover between sessions does', async () => {
+    const slots: number[] = [];
+    const { remote } = overLoopback(
+      toy({
+        init: async (info) => {
+          slots.push(info.workerSlot);
+        },
+        dispose: async () => {},
+      }),
+    );
+    await remote.init!(initInfo());
+    await remote.init!({ ...initInfo(), workerSlot: 1 });
+    await remote.dispose!(cleanup);
+    await expect(remote.observe!(operation())).resolves.toMatchObject({ root: ROOT });
+    await remote.dispose!(cleanup);
+    await expect(remote.observe!(operation())).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    expect(slots).toEqual([0, 1]);
+  });
+
+  it('keeps one signal per id within an attempt and forgets the attempt\'s signals when it ends', async () => {
+    const seen: AbortSignal[] = [];
+    const { remote } = overLoopback(
+      toy({
+        actions: ['tap'],
+        perform: async (_ref, _action, context) => {
+          seen.push(context.signal);
+        },
+        startAttempt: async () => {},
+        endAttempt: async () => {},
+      }),
+    );
+    const attempt: EngineAttemptContext = { attemptId: 'attempt-1', artifactsDir: tmpdir(), signal: new AbortController().signal, resolveSecret: async () => '', appLog: () => {}, navigation: () => {}, environment: () => {} };
+    const signal = new AbortController().signal;
+    await remote.init!(initInfo());
+    await remote.startAttempt!(attempt);
+    await remote.perform!({ id: 'n1', revision: '' }, { kind: 'tap' }, operation(signal));
+    await remote.perform!({ id: 'n1', revision: '' }, { kind: 'tap' }, operation(signal));
+    await remote.endAttempt!(cleanup);
+    await remote.startAttempt!({ ...attempt, attemptId: 'attempt-2' });
+    await remote.perform!({ id: 'n1', revision: '' }, { kind: 'tap' }, operation(signal));
+    await remote.endAttempt!(cleanup);
+    expect(seen[1]).toBe(seen[0]);
+    expect(seen[2]).not.toBe(seen[0]);
+    await remote.dispose!(cleanup);
   });
 
   it('prepares and finishes each target that shares one handle on its own connection', async () => {
@@ -338,7 +384,7 @@ describe('engine protocol', () => {
     );
     const served = config.targets[0]?.engine;
     expect(served).not.toBe(engine);
-    expect(isEngineClient(served!)).toBe(true);
+    expect(protocolEngine(served!)).toBe(served);
     expect(served?.name).toBe('toy');
     expect([...(served?.capabilities ?? [])]).toEqual([...engine.capabilities]);
     expect(config.targets[1]?.engine).toBe(remote);
@@ -349,6 +395,8 @@ describe('engine protocol', () => {
     const transport = loopbackTransport(defineEngine(toy()));
     expect(() => connectEngine({ manifest: { name: 'x', version: '1', spiVersion: 1, methods: ['engine/teleport' as never] }, transport })).toThrow(ConfigurationError);
     expect(() => connectEngine({ manifest: { name: 'x', version: '1', spiVersion: 1, methods: ['engine/perform'] }, transport })).toThrow(/perform without observe/);
+    expect(() => connectEngine({ manifest: { name: 'x', version: '1', spiVersion: 1, methods: ['engine/observe', 'engine/perform'] }, transport })).toThrow(/perform without actions/);
+    expect(() => connectEngine({ manifest: { name: 'x', version: '1', spiVersion: 1, methods: ['engine/observe', 'engine/observe'] }, transport })).toThrow(/twice/);
   });
 });
 
@@ -391,14 +439,14 @@ describe('engine protocol over a child process', () => {
 
 describe('engine protocol against a server written from the messages alone', () => {
   /** A server that speaks raw JSON-RPC, as one in another language would: no `serveEngine`, no engine handle. */
-  function handWritten(): { transport: EngineTransport; received: string[] } {
+  function handWritten(methods: readonly string[] = ['engine/observe', 'artifacts/screenshot', 'lifecycle/startAttempt']): { transport: EngineTransport; received: string[] } {
     const received: string[] = [];
     const transport: EngineTransport = {
       label: 'hand-written',
       async open() {
         const toServer = new PassThrough();
         const toClient = new PassThrough();
-        const manifest = { name: 'hand', version: '1', spiVersion: 1, methods: ['engine/observe', 'artifacts/screenshot', 'lifecycle/startAttempt'] };
+        const manifest = { name: 'hand', version: '1', spiVersion: 1, methods };
         const record = (method: string) => async (params: unknown) => {
           received.push(method);
           return params;
@@ -426,7 +474,7 @@ describe('engine protocol against a server written from the messages alone', () 
     return { transport, received };
   }
 
-  it('drops a malformed notification instead of crashing', async () => {
+  it('reports a malformed notification instead of crashing', async () => {
     const toClient = new PassThrough();
     const logs: string[] = [];
     const transport: EngineTransport = {
@@ -452,7 +500,7 @@ describe('engine protocol against a server written from the messages alone', () 
     const remote = connectEngine({ manifest: { name: 'bad', version: '1', spiVersion: 1, methods: ['engine/observe'] }, transport });
     await remote.init!(initInfo((line) => logs.push(line)));
     await remote.observe!(operation());
-    expect(logs).toEqual(['still here']);
+    expect(logs).toEqual([expect.stringMatching(/^engine server malformed sent a malformed "engine\/log" notification: /), 'still here']);
     await remote.dispose!(cleanup);
   });
 
@@ -477,6 +525,18 @@ describe('engine protocol against a server written from the messages alone', () 
     expect(facts).toEqual([{ written: 'by hand' }]);
     await remote.dispose!(cleanup);
     expect(received).toEqual(['lifecycle/startAttempt', 'shutdown']);
+    rmSync(artifactsDir, { recursive: true, force: true });
+  });
+
+  it('writes a screenshot\'s bytes into the attempt directory for a server that does not answer startAttempt', async () => {
+    const methods = ['engine/observe', 'artifacts/screenshot'] as const;
+    const { transport } = handWritten(methods);
+    const remote = connectEngine({ manifest: { name: 'hand', version: '1', spiVersion: 1, methods: [...methods] }, transport });
+    const artifactsDir = mkdtempSync(path.join(tmpdir(), 'e2e-protocol-'));
+    await remote.init!(initInfo());
+    await remote.startAttempt!({ attemptId: 'attempt-1', artifactsDir, signal: new AbortController().signal, resolveSecret: async () => '', appLog: () => {}, navigation: () => {}, environment: () => {} });
+    expect(await remote.artifacts!.screenshot(undefined, operation())).toBe(path.join('screenshots', '001-screenshot.png'));
+    await remote.dispose!(cleanup);
     rmSync(artifactsDir, { recursive: true, force: true });
   });
 

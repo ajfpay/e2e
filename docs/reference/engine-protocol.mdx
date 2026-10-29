@@ -7,10 +7,10 @@ icon: "network-wired"
 ---
 
 The engine protocol is the [engine contract](/reference/engine) as JSON-RPC
-messages. With it, an engine runs outside the runner's process: in a child
-process, on another machine, or on a device, written in any language. The
-harness drives a connected engine exactly as it drives one built with
-`defineEngine`.
+messages, and the harness drives every engine over it. An engine built with
+`defineEngine` is served [in the runner's process](#engines-in-the-runners-process).
+With `connectEngine`, an engine runs elsewhere: in a child process, on
+another machine, or on a device, written in any language.
 
 ```ts title="e2e.config.ts"
 import type { E2EConfig } from 'e2e';
@@ -107,7 +107,7 @@ server through the handle's own members.
 
 | Throws | When |
 | --- | --- |
-| `INVALID_CONFIG` | The manifest is malformed: an unknown method or kind, a method listed twice, half of a member made of several methods (`keyboard/type` without `keyboard/press`), an action list without its method, or members `defineEngine` rejects together, such as `engine/perform` without `engine/observe`. |
+| `INVALID_CONFIG` | The manifest is malformed: an unknown method, a method listed twice, or members `defineEngine` rejects, such as `keyboard/type` without `keyboard/press`, `engine/perform` without `actions`, or `engine/perform` without `engine/observe`. |
 | `ENGINE_FAILURE` | The server's manifest differs, or the connection closes mid-call. The message carries the transport's diagnostics, such as the server's last stderr lines. |
 
 ### `serveEngine`
@@ -263,17 +263,17 @@ params are the member's arguments by name, with every `OperationContext` as
 | Method | Params | Result |
 | --- | --- | --- |
 | `engine/observe` | `{ operation, options? }` | `EngineSnapshot` |
-| `engine/locate` | `{ expression, operation }` | `{ nodes }` |
+| `engine/locate` | `{ expression, operation }` | `SemanticNode[]` |
 | `engine/perform` | `{ ref, action, operation }` | `null` |
 | `engine/performAt` | `{ point, action, operation }` | `null` |
-| `keyboard/type` | `{ text, replace, operation }` | `null` |
+| `keyboard/type` | `{ text, options: { replace }, operation }` | `null` |
 | `keyboard/press` | `{ key, operation }` | `null` |
 | `keyboard/dismiss` | `{ operation }` | `null` |
 | `state/capture` | `{ operation }` | `EngineState` |
 | `state/restore` | `{ state, operation }` | `null` |
 | `artifacts/screenshot` | `{ label?, operation }` | `{ path }` or `{ data, mediaType }` |
 | `artifacts/startVideo` | `{ operation }` | `null` |
-| `artifacts/stopVideo` | `{ operation }` | `{ segments }` |
+| `artifacts/stopVideo` | `{ operation }` | `VideoSegment[]` |
 | `session/open` | `{ url, operation }` | `null` |
 | `session/back`, `session/restart`, `session/reset` | `{ operation }` | `null` |
 | `lifecycle/prepare` | `EnginePrepareInfo` without `log` | `EnginePrepareResult` or `null` |
@@ -316,9 +316,10 @@ is the abort reason as a JSON-RPC error object, encoded like a failed
 method's [error](#errors), when the harness aborted with an error of its
 own, such as a test timeout. A server aborts its signal with that error, so
 an engine that rethrows `signal.reason` raises what it would in process.
-Without `reason`, the signal aborts with the platform's `AbortError`. `$/release` with
-`{ ids }` names signals the client will not send again, so the server can
-forget them.
+Without `reason`, the signal aborts with the platform's `AbortError`. A
+server forgets an id once its signal aborts, and forgets every id first
+seen during an attempt once `lifecycle/endAttempt` settles. An id sent again
+after that is a new signal.
 
 ### Errors
 
@@ -340,7 +341,8 @@ engine.
 An engine built with `defineEngine` runs through the protocol too, over
 `loopbackTransport`: every call crosses the wire format a remote engine
 receives. An engine that passes its suite needs nothing the protocol cannot
-carry. Fixtures, `validateApp`, and declared secrets stay the engine's own.
+carry. Fixtures, `validateApp`, and declared secrets stay the engine's own,
+in the runner's process.
 
 ## Related
 
