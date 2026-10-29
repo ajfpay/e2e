@@ -752,7 +752,7 @@
       }
     },
     "changes": {
-      "description": "The change the run's test filters judged, or an e2e explore run planned from, by counts only, or why no filter ran. Present when filters are configured and the run passed --changed-since, and on an e2e explore run that passed --changed-since. base and files come together once git measured the change; skipped stands alone when no filter ran before git was asked.",
+      "description": "The change the run's test filters judged, by counts only, or why no filter ran. Present when filters are configured and the run passed --changed-since. base and files come together once git measured the change; skipped stands alone when no filter ran before git was asked.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -829,6 +829,16 @@
         },
         "ended": { "enum": ["finished", "step-limit", "time", "stuck", "aborted"] },
         "summary": { "type": "string", "maxLength": 4000 },
+        "change": {
+          "description": "The code change since --changed-since the exploration planned from, by counts only. Present when the run passed --changed-since.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base", "files"],
+          "properties": {
+            "base": { "description": "The merge base the change is measured from.", "type": "string", "pattern": "^[a-f0-9]{40,64}$" },
+            "files": { "description": "How many files changed since base; 0 when nothing did.", "type": "integer", "minimum": 0 }
+          }
+        },
         "steps": { "type": "array", "items": { "$ref": "#/$defs/exploreStep" } },
         "findings": { "type": "array", "items": { "$ref": "#/$defs/exploreFinding" } }
       }

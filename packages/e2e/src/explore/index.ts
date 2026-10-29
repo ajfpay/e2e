@@ -129,9 +129,7 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
   const env = options.env ?? process.env;
   const earlyNotices: string[] = [];
   const notice = options.notice ?? ((message: string) => void earlyNotices.push(message));
-  // A supplied goal is checked before the config runs; with no goal, the change decides the default once it is read.
-  const givenGoal = options.goal?.trim() === '' ? undefined : options.goal;
-  if (givenGoal !== undefined) resolveGoal(givenGoal, DEFAULT_GOAL);
+  const givenGoal = validGoal(options.goal);
   validateChangedSince(options.changedSince);
   const budgets = {
     maxSteps: resolveBounded(options.maxSteps, STEP_BOUNDS, 'maxSteps'),
@@ -149,15 +147,15 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
   const { raw, projectRoot, resolved } = await (options.processOutput === undefined
     ? loadConfig()
     : options.processOutput.withholdDuring(loadConfig));
-  const change = await exploreChange(options.changedSince, projectRoot, options.interruptSignal, notice);
-  const goal = resolveGoal(givenGoal, change?.brief === undefined ? DEFAULT_GOAL : DEFAULT_CHANGE_GOAL);
   const target = pickTarget(resolved.targets, options.target, notice);
+  const change = await exploreChange(options.changedSince, projectRoot, options.interruptSignal, notice);
+  const goal = givenGoal ?? (change?.brief === undefined ? DEFAULT_GOAL : DEFAULT_CHANGE_GOAL);
   const accounts = credentialAccounts(resolved.credentials);
   // An exploration runs as exactly one agent: the one named, else `default`.
   const agentName = resolved.agentNames[0]!;
   if (agentName !== 'default') notice(`exploring with agent "${agentName}"`);
 
-  const state = new ExploreState(redactGoal(goal, resolved.allSecrets), budgets);
+  const state = new ExploreState(redactGoal(goal, resolved.allSecrets), budgets, { change: change?.report });
   const explorer = explorerAgent({ state, agentName, entry: raw.agents?.[agentName], resolved: resolved.agent, notice });
   const resolvedExplorer = resolveAgentConfig(exploreAgentConfig(explorer), `agents.${agentName}`);
   // Every exploration step calls the model, a custom executor's included,
@@ -183,12 +181,11 @@ export async function explore(options: ExploreOptions = {}): Promise<ExploreOutc
         openApp: target.app.base !== undefined || launchesPinnedApp(target),
         accounts,
         session: options.session,
-        change: change?.brief,
+        brief: change?.brief,
       }),
       agents: explorerAgents,
       explore: state,
       notices: earlyNotices,
-      ...(change === undefined ? {} : { changes: change.report }),
     },
     targetIds: [target.name],
     headed: options.headed,
@@ -231,9 +228,10 @@ async function exploreChange(
   return change;
 }
 
-function resolveGoal(goal: string | undefined, fallback: string): string {
+/** The goal given, trimmed, or undefined when none was; one past `MAX_GOAL_CHARS` is `INVALID_CONFIG`. */
+function validGoal(goal: string | undefined): string | undefined {
   const trimmed = goal?.trim() ?? '';
-  if (trimmed === '') return fallback;
+  if (trimmed === '') return undefined;
   if (trimmed.length > MAX_GOAL_CHARS) {
     throw new ConfigurationError('INVALID_CONFIG', `the goal must be at most ${MAX_GOAL_CHARS} characters, got ${trimmed.length}`);
   }
@@ -330,14 +328,14 @@ function credentialAccounts(credentials: ReadonlyMap<string, ResolvedCredential>
  */
 function exploreRegistration(
   state: ExploreState,
-  start: { readonly openApp: boolean; readonly accounts: readonly PlanAccount[]; readonly session: string | undefined; readonly change: string | undefined },
+  start: { readonly openApp: boolean; readonly accounts: readonly PlanAccount[]; readonly session: string | undefined; readonly brief: string | undefined },
 ): ModuleRegistration {
   const title = state.goal;
-  const { session, change, ...body } = start;
+  const { openApp, accounts, session, brief } = start;
   // The change rides in the trusted context, never in a step's label: the
   // planner reads it, the explorer judges against it, and the report and
   // the trace page never copy it; only the opt-in AI trace records prompts.
-  const context = [...(session === undefined ? [] : [signedInContext(session)]), ...(change === undefined ? [] : [changeContext(change)])];
+  const context = [...(session === undefined ? [] : [signedInContext(session)]), ...(brief === undefined ? [] : [changeContext(brief)])];
   const test: RegisteredTest = {
     kind: 'test',
     title,
@@ -352,7 +350,7 @@ function exploreRegistration(
     },
     sessions: [],
     tags: [],
-    fn: createExploreBody({ state, stepTimeoutMs: STEP_TIMEOUT_MS, ...body, session, change: change !== undefined }),
+    fn: createExploreBody({ state, stepTimeoutMs: STEP_TIMEOUT_MS, openApp, accounts, session, exploresChange: brief !== undefined }),
     fixtures: [],
     group: undefined,
     mode: 'normal',

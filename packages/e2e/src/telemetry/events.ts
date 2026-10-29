@@ -17,7 +17,7 @@ import { modelLabel } from '../config/agent.ts';
 import type { ResolvedConfig } from '../config/resolve.ts';
 import type { McpClient } from '../mcp/server.ts';
 import type { McpSessionSummary } from '../mcp/usage.ts';
-import type { Report1Document, ReportError, ReportChanges, ReportExplore, ReportStep, ReportUsage } from '../report/build.ts';
+import type { Report1Document, ReportError, ReportExplore, ReportStep, ReportUsage } from '../report/build.ts';
 import { STEP_KINDS } from '../run/steps.ts';
 import type { JsonValue } from '../types.ts';
 import { failureKind } from './failure-kind.ts';
@@ -406,10 +406,10 @@ const EXPLORE_STEP_STATUSES = ['passed', 'failed', 'blocked', 'exhausted'] as co
 const SEVERITIES = [1, 2, 3, 4, 5] as const;
 
 /** What `e2e explore` was given and found, by count: never the goal, a step's charter, or a finding's words. */
-function exploreProperties(explore: ReportExplore, changes: ReportChanges | undefined): Record<string, JsonValue> {
+function exploreProperties(explore: ReportExplore): Record<string, JsonValue> {
   return {
     explore_ended: explore.ended,
-    explore_changed_files: changes?.files ?? 0,
+    explore_changed_files: explore.change?.files ?? 0,
     explore_max_steps: explore.budgets.maxSteps,
     explore_timeout_ms: explore.budgets.timeoutMs,
     explore_steps: explore.steps.length,
@@ -459,8 +459,7 @@ export function runCompletedEvent(report: Report1Document, context: RunContext):
       filters_timed_out: run.filters?.filter((record) => record.outcome === 'timed-out').length ?? 0,
       filters_failed: run.filters?.filter((record) => record.outcome === 'failed').length ?? 0,
       filters_skipped: run.changes?.skipped !== undefined,
-      // An exploration records the change it planned from, and no filter judged it.
-      filters_changed_files: run.explore === undefined ? (run.changes?.files ?? 0) : 0,
+      filters_changed_files: run.changes?.files ?? 0,
       tests_left_out_by_filters: run.filters?.reduce((total, record) => total + record.excluded, 0) ?? 0,
       attempts_total: attempts.reduce((total, count) => total + count, 0),
       tests_retried: attempts.filter((count) => count > 1).length,
@@ -499,7 +498,7 @@ export function runCompletedEvent(report: Report1Document, context: RunContext):
       error_kinds: unique(errors.flatMap(failureKind)).slice(0, MAX_ERROR_CODES),
       // A run whose config never loaded has no features to report.
       ...(context.config === undefined ? {} : configFeatures(context.config)),
-      ...(run.explore === undefined ? {} : exploreProperties(run.explore, run.changes)),
+      ...(run.explore === undefined ? {} : exploreProperties(run.explore)),
     },
   };
 }

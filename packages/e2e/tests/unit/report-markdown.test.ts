@@ -696,9 +696,8 @@ describe('renderMarkdownReport for an exploration', () => {
   });
 
   it('names the change an exploration with --changed-since planned from', () => {
-    const document = explored();
-    document.run.changes = { base: 'abc1234def5678abc1234def5678abc1234def56', files: 3 };
-    expect(renderMarkdownReport(document)).toContain('**Goal:** Explore checkout  \n**Change** 3 files changed since `abc1234`  \n**Steps:**');
+    const document = explored({ change: { base: 'abc1234def5678abc1234def5678abc1234def56', files: 3 } });
+    expect(renderMarkdownReport(document)).toContain('**Goal:** Explore checkout  \n**Change:** 3 files changed since `abc1234`  \n**Steps:**');
     expect(renderMarkdownReport(explored())).not.toContain('**Change**');
   });
 

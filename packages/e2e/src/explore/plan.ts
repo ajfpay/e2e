@@ -80,7 +80,7 @@ export interface PlanRequest {
   /** The saved session the exploration started from, when it started signed in. */
   readonly session?: string | undefined;
   /** Whether the run explores a code change, which the context holds between `<change>` tags. */
-  readonly change?: boolean | undefined;
+  readonly exploresChange?: boolean | undefined;
   /** Why it must end, in the planner's prompt. */
   readonly reason?: string | undefined;
   readonly remainingMs: number;
@@ -193,7 +193,7 @@ export function planInstruction(state: ExploreState, request: PlanRequest): stri
     'Findings so far:',
     findings,
     ...(request.session === undefined ? [] : ['', signedInContext(request.session)]),
-    ...(request.change === true ? ['', ...CHANGE_RULES] : []),
+    ...(request.exploresChange === true ? ['', ...CHANGE_RULES] : []),
     ...(request.accounts === undefined || request.accounts.length === 0
       ? []
       : [

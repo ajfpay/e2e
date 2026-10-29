@@ -51,7 +51,7 @@ export interface ExploreBodyOptions {
    */
   readonly accounts?: readonly PlanAccount[] | undefined;
   /** Whether the run explores a code change (`--changed-since`), which the planner is told to plan from. */
-  readonly change?: boolean | undefined;
+  readonly exploresChange?: boolean | undefined;
   readonly now?: (() => number) | undefined;
 }
 
@@ -67,7 +67,7 @@ interface Loop {
   readonly state: ExploreState;
   readonly accounts: readonly PlanAccount[];
   readonly session: string | undefined;
-  readonly change: boolean | undefined;
+  readonly exploresChange: boolean | undefined;
   /** The accounts with their passwords as secrets, once resolved; undefined when none is configured. */
   readonly secrets: AgentParams | undefined;
   readonly stepTimeoutMs: number;
@@ -90,7 +90,7 @@ export function createExploreBody(options: ExploreBodyOptions): TestFn {
         : Object.fromEntries(
             accounts.map((account) => [account.name, { username: account.username, password: credentials.user(account.name).password }]),
           );
-    const ending = await runSteps({ agent, state, accounts, session: options.session, change: options.change, secrets, stepTimeoutMs: options.stepTimeoutMs, remaining: () => deadline - now() });
+    const ending = await runSteps({ agent, state, accounts, session: options.session, exploresChange: options.exploresChange, secrets, stepTimeoutMs: options.stepTimeoutMs, remaining: () => deadline - now() });
     state.end(ending.ended, ending.summary);
     conclude(state);
   };
@@ -116,7 +116,7 @@ async function runSteps(loop: Loop): Promise<Ending> {
         reason: stop?.reason,
         accounts: loop.accounts,
         session: loop.session,
-        change: loop.change,
+        exploresChange: loop.exploresChange,
         remainingMs: remaining(),
         timeoutMs: Math.max(MIN_PLAN_TIMEOUT_MS, Math.min(PLAN_TIMEOUT_MS, remaining())),
       });

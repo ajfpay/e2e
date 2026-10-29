@@ -162,9 +162,8 @@ function filterLine(record: ReportFilter, counts: ReadonlyMap<string, number>): 
 }
 
 /**
- * The change the test filters judged or an exploration planned from
- * (`12 files changed since abc1234`), or why no filter ran. Nothing for a
- * run without `--changed-since`.
+ * What the test filters judged (`12 files changed since abc1234`), or why
+ * no filter ran. Nothing for a run without `--changed-since`.
  */
 function changesLine(changes: ReportChanges | undefined): string | undefined {
   if (changes === undefined) return undefined;
@@ -606,7 +605,9 @@ export function renderMarkdownReport(report: Report1Document, options: MarkdownR
       : [
           [
             `**Goal:** ${cell(explore.goal, MAX_GOAL_CHARS)}  `,
-            ...(run.changes === undefined ? [] : [`${changesLine(run.changes)}  `]),
+            ...(explore.change === undefined
+              ? []
+              : [`**Change:** ${plural(explore.change.files, 'file')} changed since ${code(shortCommit(explore.change.base))}  `]),
             `**Steps:** ${exploreSteps(explore)}`,
           ],
           errors,

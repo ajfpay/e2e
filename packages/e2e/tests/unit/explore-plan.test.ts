@@ -100,7 +100,7 @@ describe('planInstruction', () => {
   it('plans from the change the context holds only when the run explores one', () => {
     const without = planInstruction(fresh(), { mustFinish: false, remainingMs: 300_000, timeoutMs: 60_000 });
     expect(without).not.toContain('<change>');
-    const text = planInstruction(fresh(), { mustFinish: false, change: true, remainingMs: 300_000, timeoutMs: 60_000 });
+    const text = planInstruction(fresh(), { mustFinish: false, exploresChange: true, remainingMs: 300_000, timeoutMs: 60_000 });
     expect(text).toContain('Plan from the code change between <change> and </change> in the context:');
     expect(text).toContain('never plan a step that expects it');
   });

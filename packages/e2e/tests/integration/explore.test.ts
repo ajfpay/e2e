@@ -72,7 +72,7 @@ async function runExplore(
   app: FixtureApp,
   model: ModelInstance,
   options: Partial<ExploreOptions> = {},
-): Promise<ExploreOutcome> {
+): Promise<ExploreOutcome & { readonly notices: readonly string[] }> {
   const notices: string[] = [];
   const outcome = await explore({
     cwd: project.dir,
@@ -215,7 +215,7 @@ describe('e2e explore', () => {
   }, 120_000);
 
   it('plans from the change since --changed-since in every call\'s context, defaulting the goal to it, and records the change', async () => {
-    const changed = createProject({ 'README.md': 'app\n' });
+    const changed = createProject({ 'README.md': 'app\n', '.gitignore': '.e2e/\n' });
     try {
       initRepo(changed.dir);
       commitFiles(changed.dir, {}, 'project');
@@ -241,10 +241,17 @@ describe('e2e explore', () => {
       expect(planCalls[0]!.system).toContain('- Show the counter value');
       expect(planCalls[0]!.system).toContain('src/counter.tsx (+1 -0; full patch below)\n@@ -0,0 +1 @@\n+<output>{count}</output>');
       expect(loopCalls.at(-1)!.system).toContain('src/counter.tsx (+1 -0; full patch below)');
-      expect(outcome.report.run.changes).toEqual({ base: runGit(changed.dir, 'rev-parse', 'base'), files: 21 });
+      expect(outcome.report.run.explore!.change).toEqual({ base: runGit(changed.dir, 'rev-parse', 'base'), files: 21 });
+      expect(outcome.report.run.changes).toBeUndefined();
       const labels = outcome.report.run.results[0]!.attempts[0]!.steps.map((step) => step.label);
       expect(labels.every((label) => !label.includes('<output>{count}</output>'))).toBe(true);
       assertValidReport(outcome.report);
+      // No change since the ref: a notice, the usual default goal, and no change in the context.
+      const unchanged = await runExplore(changed, app, model, { goal: undefined, changedSince: 'HEAD' });
+      expect(unchanged.notices).toContain('no files changed since HEAD; exploring the goal without a change');
+      expect(unchanged.explore.goal).toBe('Explore the app and find bugs');
+      expect(unchanged.explore.change).toEqual({ base: runGit(changed.dir, 'rev-parse', 'HEAD'), files: 0 });
+      expect(planCalls.at(-1)!.system).not.toContain('<change>');
       await expect(runExplore(changed, app, model, { changedSince: 'no-such-ref' })).rejects.toMatchObject({ code: 'INVALID_CHANGED_SINCE' });
       // A ref that reads as a git option never reaches git.
       await expect(runExplore(changed, app, model, { changedSince: '--output=/tmp/x' })).rejects.toMatchObject({
@@ -274,7 +281,7 @@ describe('e2e explore', () => {
     expect(outcome.exitCode).toBe(0);
     expect(outcome.status).toBe('passed');
     expect(outcome.report.run.explore!.findings[0]).toMatchObject({ kind: 'warning', severity: 1 });
-    expect((outcome as unknown as { notices: string[] }).notices).toEqual([]);
+    expect(outcome.notices).toEqual([]);
   }, 120_000);
 
   it('redacts a registered secret value the goal spells out from the title, artifact names, report, and model input', async () => {

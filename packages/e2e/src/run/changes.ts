@@ -5,12 +5,12 @@
  * `INVALID_CHANGED_SINCE`.
  */
 
+import { describeValue } from '../config/validate.ts';
 import { ConfigurationError, E2EError } from '../internal/errors.ts';
 import { COMMIT_HASH, GitFailure, runGit, type GitResult } from '../internal/git.ts';
 import { compareCodePoints } from '../internal/globs.ts';
 import { onDiskPath } from '../internal/paths.ts';
 import { budgetText } from '../internal/time.ts';
-import { describeValue } from '../config/validate.ts';
 import { ellipsize } from '../report/format.ts';
 import type { TestFilterChanges } from '../types.ts';
 
@@ -37,6 +37,8 @@ interface ChangeOptions {
   readonly signal: AbortSignal;
   /** The most milliseconds every git call together may take; default 30000. */
   readonly budgetMs?: number;
+  /** What the change is for, as an interrupt names it; default `the change the test filters judge`. */
+  readonly purpose?: string;
 }
 
 const GIT_BUDGET_MS = 30_000;
@@ -61,7 +63,7 @@ export async function findChanges(options: ChangeOptions): Promise<TestFilterCha
     return await lookUp(ref, options.cwd, signal);
   } catch (cause) {
     if (options.signal.aborted) {
-      throw new E2EError('interrupted', 'INTERRUPTED', 'interrupted while finding the change the test filters judge');
+      throw new E2EError('interrupted', 'INTERRUPTED', `interrupted while finding ${options.purpose ?? 'the change the test filters judge'}`);
     }
     if (cause instanceof ConfigurationError) throw cause;
     const why = deadline.signal.aborted ? `git did not answer within ${budgetText(budgetMs)}` : cause instanceof GitFailure ? cause.message : String(cause);

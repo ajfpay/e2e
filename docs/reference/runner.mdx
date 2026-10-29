@@ -171,6 +171,7 @@ record `report.run.explore` also holds.
 | `explore.goal`, `explore.budgets` | The goal, with secret values redacted, and the step and time budgets it ran with. |
 | `explore.ended` | Why exploration stopped: `finished`, `step-limit`, `time`, `stuck`, or `aborted`. |
 | `explore.summary` | The agent's closing assessment, when it gave one. |
+| `explore.change` | With `changedSince`, the change it planned from: `base`, the merge base, and `files`, how many changed. |
 | `explore.steps` | Each step the agent planned and ran, with its status: `passed`, `failed`, `blocked`, or `exhausted`. |
 | `explore.findings` | Each finding: `kind`, `severity` from 1 to 5, `title`, `expected`, `actual`, and `reproduction`. An `issue` fails the run; a `warning` does not. |
 
