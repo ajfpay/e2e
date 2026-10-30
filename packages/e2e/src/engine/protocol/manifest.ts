@@ -10,11 +10,12 @@ import { isDeepStrictEqual } from 'node:util';
 import { ConfigurationError } from '../../internal/errors.ts';
 import { obj } from '../../internal/objects.ts';
 import type { EngineHandle } from '../index.ts';
-import { ENGINE_METHODS, METHODS, engineMember, type EngineManifest, type EngineMethod } from './protocol.ts';
+import { ENGINE_METHODS, METHODS, SERVED_METHODS, engineMember, type EngineManifest, type EngineMethod } from './protocol.ts';
 
 /**
- * Describes an engine as the manifest a server returns from `initialize`:
- * its static members and the methods its declared members answer.
+ * Describes an engine as the manifest `serveEngine` returns from
+ * `initialize`: its static members, the methods its declared members
+ * answer, and the attempt hooks the server always answers.
  */
 export function describeEngine(engine: EngineHandle): EngineManifest {
   return obj({
@@ -23,7 +24,7 @@ export function describeEngine(engine: EngineHandle): EngineManifest {
     spiVersion: engine.spiVersion,
     platform: engine.platform,
     workers: engine.workers,
-    methods: ENGINE_METHODS.filter((method) => engineMember(engine, METHODS[method].member) !== undefined),
+    methods: ENGINE_METHODS.filter((method) => SERVED_METHODS.has(method) || engineMember(engine, METHODS[method].member) !== undefined),
     actions: engine.actions,
     pointerActions: engine.pointerActions,
     tapModifiers: engine.tapModifiers === true ? true : undefined,

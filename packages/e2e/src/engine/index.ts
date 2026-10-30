@@ -576,7 +576,7 @@ export interface ResolveSecretOptions {
    * `Authorization: Basic` header carries, which a page echoing its request
    * headers would otherwise show.
    */
-  readonly derived?: (plaintext: string) => readonly string[];
+  readonly derived?: (plaintext: string) => readonly string[] | Promise<readonly string[]>;
 }
 
 /**

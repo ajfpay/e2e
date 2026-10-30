@@ -282,7 +282,7 @@ class EngineClient {
     try {
       if (this.#manifest.methods.includes('lifecycle/finish')) {
         const { signal, log: _log, ...rest } = info;
-        await this.#call(link, 'lifecycle/finish', { ...rest, signal: link.signals.encode(signal) });
+        await this.#cleanupCall(link, 'lifecycle/finish', { ...rest, signal: link.signals.encode(signal) }, info);
       }
     } finally {
       await this.#close(link, deadline - Date.now());
@@ -314,10 +314,13 @@ class EngineClient {
   }
 
   async #endAttempt(context: EngineCleanupContext): Promise<void> {
+    // A hook that outlived its budget settles after the next attempt
+    // started: it retires only the attempt it ended.
+    const ending = this.#attempt;
     try {
       if (this.#manifest.methods.includes('lifecycle/endAttempt')) await this.#forward('lifecycle/endAttempt', context);
     } finally {
-      this.#attempt = undefined;
+      if (this.#attempt === ending) this.#attempt = undefined;
     }
   }
 
@@ -334,11 +337,12 @@ class EngineClient {
     const deadline = Date.now() + context.timeoutMs;
     try {
       if (this.#manifest.methods.includes('lifecycle/dispose')) {
-        await this.#call(link, 'lifecycle/dispose', {
+        const params = {
           signal: link.signals.encode(context.signal),
           timeoutMs: context.timeoutMs,
           ...(context.reuseSignal === undefined ? {} : { reuseSignal: link.signals.encode(context.reuseSignal) }),
-        });
+        };
+        await this.#cleanupCall(link, 'lifecycle/dispose', params, context);
       }
     } finally {
       await this.#close(link, Math.min(DEFAULT_CLOSE_MS, deadline - Date.now()));
@@ -349,6 +353,20 @@ class EngineClient {
   async #forward(method: 'lifecycle/settleAttempt' | 'lifecycle/endAttempt', context: EngineCleanupContext): Promise<void> {
     const link = await this.#workerLink();
     await this.#call(link, method, { signal: link.signals.encode(context.signal), timeoutMs: context.timeoutMs });
+  }
+
+  /**
+   * Sends a hook that ends a connection, bounded by its own signal and
+   * budget: a server that ignores both must not keep the connection, or its
+   * process, open past them.
+   */
+  async #cleanupCall(link: Link, method: 'lifecycle/finish' | 'lifecycle/dispose', params: object, context: { readonly signal: AbortSignal; readonly timeoutMs: number }): Promise<void> {
+    const bound = AbortSignal.any([context.signal, AbortSignal.timeout(Math.max(0, context.timeoutMs))]);
+    const timedOut = (): Error =>
+      new EngineError('OPERATION_TIMEOUT', `engine server ${this.#options.transport.label} did not answer ${method} within ${String(context.timeoutMs)}ms`, {
+        retryable: false,
+      });
+    await withAbort(this.#call(link, method, params), bound, timedOut);
   }
 
   /**
@@ -396,8 +414,10 @@ class EngineClient {
     } finally {
       context.signal.removeEventListener('abort', forward);
     }
-    const connection = this.#connection(streams, context.log);
-    const link: Link = { connection, transport: streams, signals: new SignalEncoder(connection) };
+    const signals = new SignalEncoder();
+    const connection = this.#connection(streams, context.log, () => signals.dispose());
+    signals.attach(connection);
+    const link: Link = { connection, transport: streams, signals };
     try {
       const params: InitializeParams = obj({
         protocolVersion: ENGINE_PROTOCOL_VERSION,
@@ -406,6 +426,12 @@ class EngineClient {
         initializationOptions: this.#options.initializationOptions,
       });
       const result = (await withAbort(this.#call(link, 'initialize', params), context.signal, cancelledError)) as InitializeResult;
+      if (result?.protocolVersion !== ENGINE_PROTOCOL_VERSION) {
+        throw new InfrastructureError(
+          'ENGINE_FAILURE',
+          `engine server ${transport.label} speaks protocol ${String(result?.protocolVersion)}; this runner speaks ${String(ENGINE_PROTOCOL_VERSION)}`,
+        );
+      }
       const mismatch = manifestMismatch(this.#manifest, result.manifest);
       if (mismatch !== undefined) {
         throw new InfrastructureError(
@@ -423,7 +449,7 @@ class EngineClient {
   }
 
   /** A connection over `streams` that routes the server's callbacks to the live attempt and its log lines to `log`. */
-  #connection(streams: TransportConnection, log: (line: string) => void): Connection {
+  #connection(streams: TransportConnection, log: (line: string) => void, onClose: () => void): Connection {
     const attempt = (attemptId: string): EngineAttemptContext | undefined =>
       this.#attempt?.attemptId === attemptId ? this.#attempt : undefined;
     const requireAttempt = (attemptId: string): EngineAttemptContext => {
@@ -434,8 +460,19 @@ class EngineClient {
     // An undeclared name still reaches the harness, which refuses it with
     // the message it gives an engine in its own process.
     const secretNamed = (name: string): Secret => this.#secrets.get(name) ?? secretHandle({ name, purpose: 'generic-secret' });
-    return new Connection(streams, {
+    // The server derives a secret's redacted forms itself, asked back while
+    // the value resolves, so the provider runs once.
+    const derive = async (derivation: number, plaintext: string): Promise<readonly string[]> => {
+      try {
+        const { values } = (await connection.request('attempt/deriveSecret', { derivation, plaintext })) as { values: string[] };
+        return values;
+      } catch (cause) {
+        throw cause instanceof RpcError ? decodeError(cause) : cause;
+      }
+    };
+    const connection: Connection = new Connection(streams, {
       encodeError,
+      onClose,
       onNotificationError: (method, cause) =>
         log(`engine server ${this.#options.transport.label} sent a malformed "${method}" notification: ${cause instanceof Error ? cause.message : String(cause)}`),
       notifications: {
@@ -459,16 +496,13 @@ class EngineClient {
       },
       requests: {
         'attempt/resolveSecret': async (params) => {
-          const { attemptId, name } = params as { attemptId: string; name: string };
-          return { value: await requireAttempt(attemptId).resolveSecret(secretNamed(name)) };
-        },
-        'attempt/redact': async (params) => {
-          const { attemptId, name, values } = params as { attemptId: string; name: string; values: string[] };
-          await requireAttempt(attemptId).resolveSecret(secretNamed(name), { derived: () => values });
-          return null;
+          const { attemptId, name, derivation } = params as { attemptId: string; name: string; derivation?: number };
+          const options = derivation === undefined ? undefined : { derived: (plaintext: string) => derive(derivation, plaintext) };
+          return { value: await requireAttempt(attemptId).resolveSecret(secretNamed(name), options) };
         },
       },
     });
+    return connection;
   }
 
   /** Ends a connection: `shutdown`, `exit`, then the transport, all within `timeoutMs`. */
@@ -529,15 +563,23 @@ function encodeOperation(link: Link, operation: OperationContext): WireOperation
 /**
  * Mints one id per `AbortSignal` a connection carries and sends `$/abort`
  * when it aborts. The server forgets an id when its signal aborts or when
- * the attempt it was first seen in ends.
+ * the attempt it was first seen in ends. Disposed when the connection
+ * closes, which detaches it from every signal it listened to.
  */
 class SignalEncoder {
-  readonly #connection: Connection;
   readonly #ids = new WeakMap<AbortSignal, number>();
+  readonly #disposed = new AbortController();
+  #connection: Connection | undefined;
   #next = 1;
 
-  constructor(connection: Connection) {
+  /** Sends this encoder's `$/abort` notifications over `connection`. */
+  attach(connection: Connection): void {
     this.#connection = connection;
+  }
+
+  /** Removes every abort listener this encoder added. */
+  dispose(): void {
+    this.#disposed.abort();
   }
 
   encode(signal: AbortSignal): WireSignal {
@@ -550,8 +592,8 @@ class SignalEncoder {
         const abortedId = id;
         signal.addEventListener(
           'abort',
-          () => this.#connection.notify('$/abort', obj({ id: abortedId, reason: encodeAbortReason(signal.reason) })),
-          { once: true },
+          () => this.#connection?.notify('$/abort', obj({ id: abortedId, reason: encodeAbortReason(signal.reason) })),
+          { once: true, signal: this.#disposed.signal },
         );
       }
     }

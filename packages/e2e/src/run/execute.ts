@@ -677,7 +677,7 @@ export class TargetExecutor implements SerialHost {
     }
     const ledger = sessionLedger(session, this.config.allSecrets);
     const plaintext = await resolveSecretValue(secret, this.config.allSecrets, ledger);
-    registerDerivedSecrets(secret.name, options?.derived?.(plaintext) ?? [], ledger);
+    registerDerivedSecrets(secret.name, (await options?.derived?.(plaintext)) ?? [], ledger);
     return plaintext;
   }
 

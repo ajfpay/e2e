@@ -32,6 +32,13 @@ export interface RpcErrorObject {
   readonly data?: unknown;
 }
 
+/** Whether `value` has the shape of a JSON-RPC error object. */
+export function isRpcErrorObject(value: unknown): value is RpcErrorObject {
+  if (typeof value !== 'object' || value === null) return false;
+  const { code, message } = value as Record<string, unknown>;
+  return typeof code === 'number' && typeof message === 'string';
+}
+
 /** A failed response, thrown from `Connection.request`. */
 export class RpcError extends Error {
   readonly code: number;
@@ -213,7 +220,7 @@ export class Connection {
       method?: unknown;
       params?: unknown;
       result?: unknown;
-      error?: RpcErrorObject;
+      error?: unknown;
     };
     const hasId = id !== undefined && id !== null;
     if (method !== undefined && typeof method !== 'string') {
@@ -239,8 +246,9 @@ export class Connection {
     const pending = this.#pending.get(id);
     if (pending === undefined) return;
     this.#pending.delete(id);
-    if (error !== undefined) pending.reject(new RpcError(error));
-    else pending.resolve(result);
+    if (error === undefined) pending.resolve(result);
+    else if (isRpcErrorObject(error)) pending.reject(new RpcError(error));
+    else pending.reject(new RpcError({ code: RPC_ERRORS.internalError, message: `the peer answered with a malformed error: ${String(JSON.stringify(error)).slice(0, 200)}` }));
   }
 
   async #answer(id: RequestId, method: string, params: unknown): Promise<void> {

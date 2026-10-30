@@ -18,7 +18,7 @@ export default {
     {
       name: 'kiosk',
       engine: connectEngine({
-        manifest: { name: 'kiosk', version: '1.0.0', spiVersion: 1, methods: ['engine/observe'] },
+        manifest: { name: 'kiosk', version: '1.0.0', spiVersion: 1, platform: 'kiosk', methods: ['engine/observe'] },
         transport: spawnTransport({ command: './kiosk-engine' }),
         resolveLocators: true,
       }),
@@ -115,9 +115,11 @@ Keep the server's own logging on stderr: stdout carries the protocol. See
 
 ### `describeEngine`
 
-Returns the manifest of an engine handle: its static members and the
-methods its declared members answer. Use it to declare the manifest of a
-TypeScript engine served elsewhere.
+Returns the manifest `serveEngine` announces for an engine handle: its
+static members, the methods its declared members answer, and
+`lifecycle/startAttempt` and `lifecycle/endAttempt`, which `serveEngine`
+always answers. Use it to declare the manifest of a TypeScript engine
+served elsewhere.
 
 ```ts
 export function describeEngine(engine: EngineHandle): EngineManifest;
@@ -177,7 +179,7 @@ A connection opens and closes as an LSP connection does.
 | `shutdown` | request, client to server | - | `null` |
 | `exit` | notification, client to server | - | - |
 
-A server refuses any `protocolVersion` but `1`. After `shutdown`, it leaves
+Each side refuses any `protocolVersion` but `1`. After `shutdown`, it leaves
 its signals as they are. When a connection closes without `shutdown`, it
 aborts every signal it holds.
 
@@ -253,8 +255,12 @@ the client drops one for an attempt that already ended.
 | `attempt/navigation` | notification | `{ attemptId, line }` |
 | `attempt/environment` | notification | `{ attemptId, facts }` |
 | `attempt/screen` | notification | `{ attemptId, snapshot }` |
-| `attempt/resolveSecret` | request | `{ attemptId, name }`, result `{ value }` |
-| `attempt/redact` | request | `{ attemptId, name, values }`: forms derived from a secret, redacted under its name |
+| `attempt/resolveSecret` | request | `{ attemptId, name, derivation? }`, result `{ value }` |
+
+With `derivation`, the client asks back with `attempt/deriveSecret`
+`{ derivation, plaintext }` before it answers. The server returns
+`{ values }`, the forms the engine derives from the value, such as a
+basic-auth header, and the client redacts them under the secret's name.
 
 ### Signals
 
@@ -283,7 +289,9 @@ a local one:
 
 Any other error code carries the message alone. The harness treats it as
 an infrastructure failure, as it treats a plain `Error` from a local
-engine.
+engine. Every error's `data` may also carry `stack`, `errno` (a Node error
+code such as `ECONNREFUSED`), and `cause`, an error object of the same
+shape, so reports show where the engine failed.
 
 ## Types
 

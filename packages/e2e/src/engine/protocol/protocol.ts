@@ -16,7 +16,7 @@
 import { E2EError, ConfigurationError, ERROR_CATEGORIES, InfrastructureError, TestError, asEngineError, isE2EError } from '../../internal/errors.ts';
 import { ENGINE_ERROR_CODES, EngineError, type EngineErrorCode, type EngineSpiVersion, type LocatorActionKind, type PointerActionKind } from '../contract.ts';
 import type { Engine, EngineSnapshot } from '../index.ts';
-import { RPC_ERRORS, type RpcErrorObject } from './connection.ts';
+import { RPC_ERRORS, isRpcErrorObject, type RpcErrorObject } from './connection.ts';
 
 /** The protocol version this runner speaks; `initialize` refuses any other. */
 export const ENGINE_PROTOCOL_VERSION = 1;
@@ -78,6 +78,9 @@ export type EngineMethod = keyof typeof METHODS;
 
 /** Every engine method a server may answer, in protocol order. */
 export const ENGINE_METHODS = Object.freeze(Object.keys(METHODS)) as readonly EngineMethod[];
+
+/** Methods `serveEngine` answers for any engine: it tracks the attempt whether or not the engine has hooks for it. */
+export const SERVED_METHODS: ReadonlySet<EngineMethod> = new Set(['lifecycle/startAttempt', 'lifecycle/endAttempt']);
 
 /** An engine member's function, read off a `member` path of `METHODS`; undefined when the engine lacks it. */
 export function engineMember(engine: Engine, member: string): ((...args: unknown[]) => Promise<unknown>) | undefined {
@@ -172,6 +175,12 @@ export interface WirePixels {
 /** `EngineSnapshot` on the wire. */
 export type WireSnapshot = Omit<EngineSnapshot, 'pixels'> & { readonly pixels?: WirePixels };
 
+/** Params of `attempt/deriveSecret`: the value the client resolved, for the forms the engine derives from it. */
+export interface DeriveSecretParams {
+  readonly derivation: number;
+  readonly plaintext: string;
+}
+
 /** Params of `$/abort`. */
 export interface AbortParams {
   readonly id: number;
@@ -201,6 +210,14 @@ export function decodeSnapshot(wire: WireSnapshot): EngineSnapshot {
   return { ...rest, pixels: { ...pixels, data: new Uint8Array(Buffer.from(pixels.data, 'base64')) } };
 }
 
+/** Where an error came from, carried beside any error so a report shows the engine's own stack and causes. */
+interface WireTrace {
+  readonly stack?: string;
+  /** A Node error's own code, such as `ECONNREFUSED`, for a plain error. */
+  readonly errno?: string;
+  readonly cause?: RpcErrorObject;
+}
+
 /** The e2e error a failed engine method carries in its JSON-RPC error's `data`. */
 type WireErrorData =
   | { readonly type: 'engine'; readonly code: EngineErrorCode; readonly retryable: boolean }
@@ -212,17 +229,25 @@ type WireErrorData =
       readonly details?: E2EError['details'];
     };
 
+/** How deep a cause chain crosses, as deep as a report describes one. */
+const MAX_WIRE_CAUSES = 3;
+
+/** Bytes of a stack that cross, as many as a report keeps. */
+const MAX_WIRE_STACK = 65_536;
+
 /**
  * Encodes what an engine member threw. An `EngineError` and a harness error
  * keep their code and category, so the harness classifies a remote failure
- * exactly as a local one; anything else crosses as its message alone, which
- * the harness treats as an infrastructure failure, as it does locally.
+ * exactly as a local one; anything else crosses as its message, which the
+ * harness treats as an infrastructure failure, as it does locally. Every
+ * error keeps its stack and its first causes.
  */
-export function encodeError(cause: unknown): RpcErrorObject {
+export function encodeError(cause: unknown, depth = 0): RpcErrorObject {
   const message = cause instanceof Error ? cause.message : String(cause);
+  const trace = encodeTrace(cause, depth);
   const engine = asEngineError(cause);
   if (engine !== undefined) {
-    return { code: RPC_ERRORS.engineError, message, data: { type: 'engine', code: engine.code, retryable: engine.retryable } };
+    return { code: RPC_ERRORS.engineError, message, data: { type: 'engine', code: engine.code, retryable: engine.retryable, ...trace } };
   }
   if (isE2EError(cause)) {
     const { details } = cause;
@@ -235,10 +260,21 @@ export function encodeError(cause: unknown): RpcErrorObject {
         code: cause.code,
         retryable: cause.retryable,
         ...(details === undefined ? {} : { details }),
+        ...trace,
       },
     };
   }
-  return { code: RPC_ERRORS.internalError, message };
+  const errno = cause instanceof Error ? (cause as { code?: unknown }).code : undefined;
+  const plain = { ...trace, ...(typeof errno === 'string' ? { errno } : {}) };
+  return { code: RPC_ERRORS.internalError, message, ...(Object.keys(plain).length === 0 ? {} : { data: plain }) };
+}
+
+function encodeTrace(cause: unknown, depth: number): WireTrace {
+  if (!(cause instanceof Error)) return {};
+  return {
+    ...(cause.stack === undefined ? {} : { stack: cause.stack.slice(0, MAX_WIRE_STACK) }),
+    ...(cause.cause === undefined || depth >= MAX_WIRE_CAUSES ? {} : { cause: encodeError(cause.cause, depth + 1) }),
+  };
 }
 
 /** The e2e error in a response's `data`, or undefined for anything off the wire format, which then decodes as a plain error. */
@@ -251,8 +287,20 @@ function wireErrorData(data: unknown): WireErrorData | undefined {
   return undefined;
 }
 
-/** Decodes an error response into the error the engine member threw. */
-export function decodeError(error: { readonly code: number; readonly message: string; readonly data?: unknown }): Error {
+/** Decodes an error response into the error the engine member threw, with the stack and causes it crossed with. */
+export function decodeError(error: RpcErrorObject, depth = 0): Error {
+  const decoded = decodeClassified(error);
+  if (typeof error.data !== 'object' || error.data === null) return decoded;
+  const { stack, errno, cause } = error.data as Record<string, unknown>;
+  if (typeof stack === 'string') decoded.stack = stack;
+  if (typeof errno === 'string' && decoded.constructor === Error) Object.assign(decoded, { code: errno });
+  if (isRpcErrorObject(cause) && depth < MAX_WIRE_CAUSES) {
+    Object.defineProperty(decoded, 'cause', { value: decodeError(cause, depth + 1), writable: true, configurable: true, enumerable: false });
+  }
+  return decoded;
+}
+
+function decodeClassified(error: RpcErrorObject): Error {
   const data = wireErrorData(error.data);
   if (error.code === RPC_ERRORS.engineError && data?.type === 'engine') {
     return new EngineError(data.code, error.message, { retryable: data.retryable });

@@ -16,6 +16,7 @@ import type {
   EnginePrepareInfo,
   EngineSnapshot,
   OperationContext,
+  ResolveSecretOptions,
 } from '../index.ts';
 import type { Secret } from '../../types.ts';
 import { Connection, RPC_ERRORS, RpcError, type MessageStreams } from './connection.ts';
@@ -24,11 +25,13 @@ import {
   ENGINE_METHODS,
   ENGINE_PROTOCOL_VERSION,
   METHODS,
+  SERVED_METHODS,
   decodeError,
   encodeError,
   encodeSnapshot,
   engineMember,
   type AbortParams,
+  type DeriveSecretParams,
   type InitializeParams,
   type InitializeResult,
   type LifecycleMethod,
@@ -82,6 +85,9 @@ class EngineServer {
   readonly #source: EngineHandle | EngineFactory;
   readonly #connection: Connection;
   readonly #signals = new Map<number, AbortController>();
+  /** The `derived` option of each `resolveSecret` in flight, by the id the client asks back with. */
+  readonly #derivations = new Map<number, NonNullable<ResolveSecretOptions['derived']>>();
+  #nextDerivation = 1;
   #engine: EngineHandle | undefined;
   #attempt: ServedAttempt | undefined;
   #shutdown = false;
@@ -105,6 +111,12 @@ class EngineServer {
       },
       requests: {
         initialize: (params) => this.#initialize(params as InitializeParams),
+        'attempt/deriveSecret': async (params) => {
+          const { derivation, plaintext } = params as DeriveSecretParams;
+          const derive = this.#derivations.get(derivation);
+          if (derive === undefined) throw new Error(`no secret is being resolved as derivation ${String(derivation)}`);
+          return { values: await derive(plaintext) };
+        },
         shutdown: async () => {
           this.#shutdown = true;
           return null;
@@ -139,12 +151,16 @@ class EngineServer {
     return { protocolVersion: ENGINE_PROTOCOL_VERSION, manifest: describeEngine(this.#engine) };
   }
 
-  /** Registers one request handler per method `engine` answers. */
+  /**
+   * Registers one request handler per method `engine` answers. The attempt
+   * hooks are always answered: the server tracks the attempt for its
+   * callbacks and signals whether or not the engine has hooks of its own.
+   */
   #register(engine: EngineHandle): void {
     const lifecycle = this.#lifecycleHandlers();
     for (const method of ENGINE_METHODS) {
       const spec = METHODS[method];
-      const member = engineMember(engine, spec.member);
+      const member = engineMember(engine, spec.member) ?? (SERVED_METHODS.has(method) ? async () => {} : undefined);
       if (member === undefined) continue;
       this.#connection.onRequest(
         method,
@@ -178,11 +194,14 @@ class EngineServer {
       },
       settleAttempt: (hook, params) => hook(this.#cleanup(params as WireCleanup)),
       endAttempt: async (hook, params) => {
+        // A hook that outlived its budget settles after the next attempt
+        // started: it retires only the attempt it ended.
+        const ending = this.#attempt;
         try {
           return await hook(this.#cleanup(params as WireCleanup));
         } finally {
-          for (const id of this.#attempt?.signals ?? []) this.#signals.delete(id);
-          this.#attempt = undefined;
+          for (const id of ending?.signals ?? []) this.#signals.delete(id);
+          if (this.#attempt === ending) this.#attempt = undefined;
         }
       },
       dispose: (hook, params) => {
@@ -202,17 +221,33 @@ class EngineServer {
       artifactsDir,
       signal,
       resolveSecret: async (secret: Secret, options) => {
-        const { value } = (await this.#call('attempt/resolveSecret', { attemptId, name: secret.name })) as { value: string };
-        if (options?.derived !== undefined) {
-          await this.#call('attempt/redact', { attemptId, name: secret.name, values: options.derived(value) });
+        const derived = options?.derived;
+        if (derived === undefined) return this.#resolveSecret({ attemptId, name: secret.name });
+        const derivation = this.#nextDerivation;
+        this.#nextDerivation += 1;
+        this.#derivations.set(derivation, derived);
+        try {
+          return await this.#resolveSecret({ attemptId, name: secret.name, derivation });
+        } finally {
+          this.#derivations.delete(derivation);
         }
-        return value;
       },
       appLog: (entry) => send('attempt/appLog', { entry }),
       navigation: (line) => send('attempt/navigation', { line }),
       environment: (facts) => send('attempt/environment', { facts }),
       ...(screens ? { screen: (snapshot: EngineSnapshot) => send('attempt/screen', { snapshot: encodeSnapshot(snapshot) }) } : {}),
     };
+  }
+
+  /**
+   * Resolves a secret on the client. With a `derivation`, the client asks
+   * back for the forms the engine derives from the value
+   * (`attempt/deriveSecret`) and redacts them before it answers, so the
+   * provider runs once.
+   */
+  async #resolveSecret(params: { attemptId: string; name: string; derivation?: number }): Promise<string> {
+    const { value } = (await this.#call('attempt/resolveSecret', params)) as { value: string };
+    return value;
   }
 
   /** Calls the client, rethrowing its failure as the error the harness raised. */
