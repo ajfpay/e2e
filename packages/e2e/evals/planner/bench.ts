@@ -284,9 +284,12 @@ function scorecard(scored: readonly RunResult[]): { text: string; passed: boolea
     for (const fixture of fixtures) {
       const runsOf = scored.filter((result) => result.run.model === model && result.run.fixture === fixture);
       const passes = runsOf.filter((result) => result.passed).length;
-      const fixturePassed = fixture.expect.decision === 'any' || passes >= Math.ceil(runsOf.length * PASS_SHARE);
+      // A run that broke (no report, a judge that threw) is the harness's failure, on an observed fixture too.
+      const broke = runsOf.some((result) => result.error !== undefined);
+      const observed = fixture.expect.decision === 'any';
+      const fixturePassed = !broke && (observed || passes >= Math.ceil(runsOf.length * PASS_SHARE));
       passed &&= fixturePassed;
-      const mark = fixture.expect.decision === 'any' ? '·' : fixturePassed ? '✓' : '✗';
+      const mark = !fixturePassed ? '✗' : observed ? '·' : '✓';
       lines.push(`${mark} ${fixture.id} [${passes}/${runsOf.length}] ${fixture.edgeCase}`);
       for (const result of runsOf) {
         lines.push(`    #${result.run.index + 1} ${describe(result)}`);
