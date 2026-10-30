@@ -278,12 +278,11 @@ class ScreenImpl implements Screen {
       const reads = engine.reads(deadline);
       let sampled = false;
       for (;;) {
-        const startedWithMs = deadline.remaining();
         let node: SemanticNode | null;
         try {
           ({ node } = await engine.tryRead(internals.expression, reads));
         } catch (cause) {
-          if (sampled && reads.cutOff(cause, startedWithMs)) throw notVisible(cause);
+          if (sampled && reads.cutOff(cause)) throw notVisible(cause);
           throw cause;
         }
         sampled = true;

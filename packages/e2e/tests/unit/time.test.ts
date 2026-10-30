@@ -399,6 +399,56 @@ describe('pollCondition', () => {
     expect(reads.timeoutMs()).toBe(1);
   });
 
+  it('judges a cut-off read by when that read started, not when its sample did', async () => {
+    vi.useFakeTimers();
+    const deadline = new Deadline(1_000);
+    const timedOut = () => new EngineError('OPERATION_TIMEOUT', 'read timed out', { retryable: false });
+    let samples = 0;
+    const promise = pollReads({
+      deadline,
+      reads: new ReadWindow(deadline, new Deadline(10_000)),
+      signal: new AbortController().signal,
+      negated: false,
+      evaluate: async (reads) => {
+        samples += 1;
+        if (samples === 1) {
+          await reads.read(() => sleep(300));
+          return false;
+        }
+        // The sample starts with 600 ms left; its second read starts with 100.
+        await reads.read(() => sleep(500));
+        await reads.read((timeoutMs) => withTimeout(sleep(10_000), timeoutMs, timedOut));
+        return true;
+      },
+      onTimeout: () => new Error('poll timed out'),
+    });
+    const settled = expect(promise).rejects.toThrow('poll timed out');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settled;
+  });
+
+  it('counts a negation as held only until the deadline, not through a last read past it', async () => {
+    vi.useFakeTimers();
+    const deadline = new Deadline(3_000);
+    let samples = 0;
+    const promise = pollReads({
+      deadline,
+      reads: new ReadWindow(deadline, new Deadline(10_000)),
+      signal: new AbortController().signal,
+      negated: true,
+      evaluate: async (reads) => {
+        samples += 1;
+        // The first read sees the condition; the second starts 400 ms before the deadline and ends 1.1 s past it.
+        await reads.read(() => sleep(samples === 1 ? 2_500 : 1_500));
+        return samples === 1;
+      },
+      onTimeout: () => new Error('negation timed out'),
+    });
+    const settled = expect(promise).rejects.toThrow('negation timed out');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await settled;
+  });
+
   it('ends on a read cut off within the longest read time of the deadline, and fails on one that hung with more left', async () => {
     vi.useFakeTimers();
     const cut = new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });

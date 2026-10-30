@@ -83,6 +83,7 @@ export const POLL_INTERVAL_MS = 100;
  */
 export class ReadWindow {
   private slowestMs = 0;
+  private lastStartedWithMs = Number.POSITIVE_INFINITY;
 
   constructor(
     readonly deadline: Deadline,
@@ -95,24 +96,30 @@ export class ReadWindow {
     return Math.max(1, Math.min(this.cap.remaining(now), this.deadline.endsAt + this.slowestMs - now));
   }
 
+  /** Marks a read starting now: the one `cutOff` judges until the next starts. */
+  starting(now: number = Date.now()): void {
+    this.lastStartedWithMs = this.deadline.remaining(now);
+  }
+
   /** Runs one engine read on `timeoutMs()`, timing it when it answers. */
   async read<T>(call: (timeoutMs: number) => Promise<T>): Promise<T> {
     const startedAt = Date.now();
+    this.starting(startedAt);
     const value = await call(this.timeoutMs());
     this.slowestMs = Math.max(this.slowestMs, Date.now() - startedAt);
     return value;
   }
 
   /**
-   * Whether `cause` is a read the deadline cut off: an operation timeout of a
-   * read that started with less than one poll tick, or the longest read this
-   * wait finished, of the deadline left, so it timed out because the wait
+   * Whether `cause` is a read the deadline cut off: an operation timeout of
+   * this window's latest read when it started with less than one poll tick,
+   * or the longest read this wait finished, of the deadline left, so it timed out because the wait
    * did, not because the app stopped answering. A read that started with
    * more and still timed out hung, and its timeout is the failure. Reads the
    * engine error a locator failure wraps as well as a bare one.
    */
-  cutOff(cause: unknown, startedWithMs: number): boolean {
-    return startedWithMs < Math.max(POLL_INTERVAL_MS, this.slowestMs) && isOperationTimeout(cause);
+  cutOff(cause: unknown): boolean {
+    return this.lastStartedWithMs < Math.max(POLL_INTERVAL_MS, this.slowestMs) && isOperationTimeout(cause);
   }
 }
 
@@ -183,13 +190,13 @@ export async function pollReads(options: PollReadsOptions): Promise<void> {
   const holds = (now: number): boolean => holdingSince !== undefined && now - holdingSince >= grace;
   let sampled = false;
   for (;;) {
-    const startedWithMs = deadline.remaining(readAt);
     let value: boolean | undefined;
+    reads.starting(readAt);
     try {
       value = await options.evaluate(reads);
       sampled = true;
     } catch (cause) {
-      if (!sampled || !reads.cutOff(cause, startedWithMs)) throw cause;
+      if (!sampled || !reads.cutOff(cause)) throw cause;
       if (negated && holds(Math.min(Date.now(), deadline.endsAt))) return;
       throw await options.onTimeout(cause);
     }
@@ -199,7 +206,7 @@ export async function pollReads(options: PollReadsOptions): Promise<void> {
       holdingSince = value === false ? (holdingSince ?? readAt) : undefined;
     }
     const now = Date.now();
-    if (holds(now)) return;
+    if (holds(Math.min(now, deadline.endsAt))) return;
     if (deadline.expired(now)) throw await options.onTimeout();
     await sleep(Math.min(POLL_INTERVAL_MS, deadline.remaining(now)), options.signal);
     readAt = Date.now();

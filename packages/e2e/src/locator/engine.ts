@@ -201,12 +201,11 @@ export class LocatorEngine {
   ): Promise<readonly NodeRef[]> {
     let retried: unknown;
     for (;;) {
-      const startedWithMs = reads.deadline.remaining();
       try {
         return await reads.read((timeoutMs) => this.session.locate(expression, this.readOperation(timeoutMs)));
       } catch (cause) {
         // A retry the deadline cut off saw nothing new: the wait ends on the failure it was retrying.
-        if (retried !== undefined && reads.cutOff(cause, startedWithMs)) throw translateLocatorError(retried, expression);
+        if (retried !== undefined && reads.cutOff(cause)) throw translateLocatorError(retried, expression);
         const engineError = asEngineError(cause);
         if (engineError?.retryable === true) {
           if (missingFrame === 'empty' && engineError.code === 'FRAME_NOT_FOUND') return [];
@@ -242,13 +241,12 @@ export class LocatorEngine {
       });
     let sampled = false;
     for (let rounds = 1; ; rounds += 1) {
-      const startedWithMs = deadline.remaining();
       let refs: readonly NodeRef[];
       try {
         refs = await this.resolveOnce(expression, reads);
       } catch (cause) {
         // A resolve the deadline cut off, after one that matched nothing, is the wait running out.
-        if (sampled && reads.cutOff(cause, startedWithMs)) throw notFound(cause);
+        if (sampled && reads.cutOff(cause)) throw notFound(cause);
         throw cause;
       }
       sampled = true;
@@ -440,12 +438,11 @@ export class LocatorEngine {
     const reads = this.reads(deadline);
     let sampled = false;
     for (;;) {
-      const startedWithMs = deadline.remaining();
       let node: SemanticNode | null;
       try {
         ({ node } = await this.tryRead(expression, reads));
       } catch (cause) {
-        if (sampled && reads.cutOff(cause, startedWithMs)) throw notVisible(cause);
+        if (sampled && reads.cutOff(cause)) throw notVisible(cause);
         throw cause;
       }
       sampled = true;
@@ -543,8 +540,9 @@ export class LocatorEngine {
     const startedAt = timestamp();
     const startedMs = Date.now();
     let stale = 0;
+    const reads = this.reads(deadline);
     for (;;) {
-      const { ref, waitedMs } = await this.resolveCounted(expression, this.reads(deadline));
+      const { ref, waitedMs } = await this.resolveCounted(expression, reads);
       // Read now, from the resolve's own cache: a dragTo's target resolve
       // below supersedes this ref, and the node it named would be gone.
       const node = this.options.recordEvent === undefined ? undefined : await this.session.read(ref, this.operationWithin(deadline)).catch(() => undefined);
