@@ -242,21 +242,26 @@ const BOOKS = [
   ['A Psalm for the Wild-Built', '$12.50'],
 ];
 
-/** The catalog with its add button labeled `label`. */
-function catalogScreen(label: string): string {
-  return `<ul>${BOOKS.map(([title, price]) => `<li><h2>${title}</h2><span class="price">${price}</span> <button>${label}</button></li>`).join('')}</ul>`;
+/** The catalog with its add button labeled `label`, under `style` when the change restyles it. */
+function catalogScreen(label: string, style = ''): string {
+  const books = BOOKS.map(([title, price]) => `<li><h2>${title}</h2><span class="price">${price}</span> <button>${label}</button></li>`).join('');
+  return `${style === '' ? '' : `<style>${style}</style>`}<ul class="catalog">${books}</ul>`;
 }
 
-/** The shop's screens before any change: each path's body; the nav links them all. */
+/** The shop's screens before any change: each path's body. */
 export const SCREENS: Readonly<Record<string, string>> = {
   '/': catalogScreen('Add to cart'),
-  '/cart': '<p>Your cart is empty.</p><a href="/">Browse the catalog</a>',
+  '/cart': '<p>Your cart is empty.</p><a href="/">Browse the catalog</a> <a href="/checkout">Checkout</a>',
+  '/checkout': '<form><label>Card number <input name="card"></label> <button type="submit" disabled>Pay</button></form>',
   '/account': '<form><label>Name <input name="name" value="Ada"></label> <label><input type="checkbox" name="newsletter"> Email me the monthly newsletter</label> <button>Save</button></form>',
   '/orders': '<p>No orders yet.</p>',
 };
 
-/** Each screen's name in the nav and its heading. */
-export const NAV_LABELS: Readonly<Record<string, string>> = { '/': 'Catalog', '/cart': 'Cart (0)', '/account': 'Account', '/orders': 'Orders' };
+/** The screens the nav links, by their names in it; the others are reached from a screen. */
+export const NAV_LABELS: Readonly<Record<string, string>> = { '/': 'Catalog', '/cart': 'Cart (0)', '/basket': 'Cart (0)', '/account': 'Account', '/orders': 'Orders' };
+
+/** Each screen's heading. */
+export const TITLES: Readonly<Record<string, string>> = { '/': 'Catalog', '/cart': 'Cart', '/basket': 'Cart', '/checkout': 'Checkout', '/account': 'Account', '/orders': 'Orders' };
 
 /** The account screen once the newsletter opt-in is gone. */
 const ACCOUNT_WITHOUT_NEWSLETTER = '<form><label>Name <input name="name" value="Ada"></label> <button>Save</button></form>';
@@ -347,6 +352,7 @@ export const FIXTURES: readonly PlannerFixture[] = [
     edgeCase: 'A build config change that redirects the cart reaches users, though no page changes; the planner explores the cart.',
     change: edit('next.config.js', '    return [];', "    return [{ source: '/cart', destination: '/basket', permanent: true }];"),
     message: 'config: move the cart to /basket',
+    screens: { '/cart': null, '/basket': SCREENS['/cart']! },
     expect: { decision: 'explore', firstStep: [{ pattern: /cart|basket|redirect/i, reason: 'the redirect changes where the cart lives' }] },
   },
   {
@@ -476,6 +482,7 @@ export const FIXTURES: readonly PlannerFixture[] = [
     id: 'price-style',
     edgeCase: 'A stylesheet-only change that hides catalog prices on narrow screens is visible; the planner explores.',
     change: { 'src/pages/catalog.css': '.catalog .price {\n  font-weight: 600;\n}\n\n@media (max-width: 480px) {\n  .catalog .price {\n    display: none;\n  }\n}\n' },
+    screens: { '/': catalogScreen('Add to cart', '.catalog .price { font-weight: 600; } @media (max-width: 480px) { .catalog .price { display: none; } }') },
     message: 'style(catalog): bolder prices',
     expect: { decision: 'explore', firstStep: [{ pattern: /catalog|price|book/i, reason: 'the stylesheet styles the catalog prices' }] },
   },

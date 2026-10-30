@@ -445,7 +445,8 @@ explores it with a real model against a static copy of the shop (only the
 explorer's steps are scripted), and judges read `run.explore`: skip or
 explore, what the first charter targets, what no charter may expect, and
 rubric questions a judge model answers where a pattern can't. A fixture passes
-with two thirds of its runs.
+with two thirds of its runs; an observed one (`decision: 'any'`) only prints
+what the planner did and fails only when a run breaks.
 
 ```bash
 pnpm --filter e2e run build && pnpm --filter @e2e-dev/web run build

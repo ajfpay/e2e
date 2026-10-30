@@ -30,7 +30,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { gateway, generateText, Output } from 'ai';
 import { z } from 'zod';
-import { APP_SOURCE, FIXTURES, NAV_LABELS, SCREENS, type PlannerFixture } from './fixtures.ts';
+import { APP_SOURCE, FIXTURES, NAV_LABELS, SCREENS, TITLES, type PlannerFixture } from './fixtures.ts';
 import { judgeRubric, judgeRun, type AskRubric, type Judgement, type PlannedRun } from './judges.ts';
 
 const PACKAGE_ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -61,6 +61,9 @@ const only = options.only?.split(',').map((id) => id.trim()).filter(Boolean);
 const unknown = only?.filter((id) => !FIXTURES.some((fixture) => fixture.id === id)) ?? [];
 if (unknown.length > 0) fail(`unknown fixture ${unknown.join(', ')}; one of ${FIXTURES.map((fixture) => fixture.id).join(', ')}`);
 const fixtures = only === undefined ? FIXTURES : FIXTURES.filter((fixture) => only.includes(fixture.id));
+// A selection that evaluates nothing must not report a pass.
+if (models.length === 0) fail('--models names no model');
+if (fixtures.length === 0) fail('--only names no fixture');
 
 if (options.list) {
   for (const fixture of fixtures) process.stdout.write(`${fixture.id.padEnd(26)} ${fixture.expect.decision.padEnd(7)} ${fixture.edgeCase}\n`);
@@ -244,10 +247,13 @@ function fixtureEnv(): NodeJS.ProcessEnv {
 async function startShop(overrides: Readonly<Record<string, string | null>>): Promise<{ url: string; close: () => Promise<void> }> {
   const bodies: Record<string, string | null> = { ...SCREENS, ...overrides };
   const present = Object.entries(bodies).filter((entry): entry is [string, string] => entry[1] !== null);
-  const nav = `<nav>${present.map(([pathname]) => `<a href="${pathname}">${NAV_LABELS[pathname] ?? pathname}</a>`).join(' ')}</nav>`;
+  const nav = `<nav>${present
+    .filter(([pathname]) => NAV_LABELS[pathname] !== undefined)
+    .map(([pathname]) => `<a href="${pathname}">${NAV_LABELS[pathname]}</a>`)
+    .join(' ')}</nav>`;
   const page = (title: string, body: string) =>
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${title} - Bookshelf</title></head><body><header><strong>Bookshelf</strong> ${nav}</header><main><h1>${title}</h1>${body}</main></body></html>`;
-  const pages = new Map(present.map(([pathname, body]) => [pathname, page(NAV_LABELS[pathname] ?? pathname, body)]));
+  const pages = new Map(present.map(([pathname, body]) => [pathname, page(TITLES[pathname] ?? pathname, body)]));
   const server = createServer((request, response) => {
     const html = pages.get(new URL(request.url ?? '/', 'http://shop').pathname);
     response.writeHead(html === undefined ? 404 : 200, { 'content-type': 'text/html; charset=utf-8' });
