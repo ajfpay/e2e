@@ -49,8 +49,13 @@ reporters: ['list'], // default
 ```
 
 - It renders the same events [`onEvent`](#onevent) receives.
+- On a TTY a live view shows the running tests. When stdout is not a
+  terminal (piped, redirected, most CI), each test prints as it finishes.
 - The [summary rows](#onrunfinished) reporters return print under its
   summary.
+- The output ends with a `Failed` row per failed test: its `file:line`,
+  its error's first line, and its trace page, so `e2e run | tail` still
+  names what broke.
 
 #### `json`
 
