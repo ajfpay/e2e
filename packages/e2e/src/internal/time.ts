@@ -75,10 +75,11 @@ export function budgetText(ms: number): string {
 export const POLL_INTERVAL_MS = 100;
 
 /**
- * The reads of one wait. Each engine read runs on the time left before the
- * wait's deadline plus the longest read the wait has finished, capped by
- * `cap` (the running phase's deadline), so a slow last read still finishes.
- * Without a cap, reads end at the deadline.
+ * The reads of one wait. Each engine read runs until the wait's deadline
+ * plus the longest read the wait has finished, capped by `cap` (the running
+ * phase's deadline), so a slow last read still finishes. Reads past the
+ * deadline share that extra time instead of each getting it again. Without
+ * a cap, reads end at the deadline.
  */
 export class ReadWindow {
   private slowestMs = 0;
@@ -91,7 +92,7 @@ export class ReadWindow {
   /** The budget for an engine read starting now, never under 1 ms. */
   timeoutMs(): number {
     const now = Date.now();
-    return Math.max(1, Math.min(this.cap.remaining(now), this.deadline.remaining(now) + this.slowestMs));
+    return Math.max(1, Math.min(this.cap.remaining(now), this.deadline.endsAt + this.slowestMs - now));
   }
 
   /** Runs one engine read on `timeoutMs()`, timing it when it answers. */

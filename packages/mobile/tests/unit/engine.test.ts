@@ -1088,14 +1088,13 @@ describe('observation', () => {
     }
   });
 
-  it('finishes a slow read the budget covers: a poll grants its last read the time reads take', async () => {
+  it('lets a slow snapshot run for the whole timeout the locate gets', async () => {
     const h = harness();
     await openAttempt(h);
     vi.useFakeTimers();
     try {
       h.fake.respond('capture.snapshot', () => new Promise((resolve) => setTimeout(() => resolve(SETTINGS_SNAPSHOT), 3_000)));
       const about = { kind: 'query', query: { kind: 'text', value: { kind: 'string', value: 'About', exact: true } } } as const;
-      // The last read of a poll that has 500 ms left, after reads that took 3 s.
       const read = h.engine.locate!(about, { ...operation(), timeoutMs: 3_500 });
       const assertion = expect(read).resolves.toHaveLength(1);
       await vi.advanceTimersByTimeAsync(3_000);

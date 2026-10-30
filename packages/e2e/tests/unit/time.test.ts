@@ -385,6 +385,20 @@ describe('pollCondition', () => {
     expect(timeouts).toEqual([350, 100]);
   });
 
+  it('shares the extra time past the deadline across the reads that run in it', async () => {
+    vi.useFakeTimers();
+    const deadline = new Deadline(100);
+    const reads = new ReadWindow(deadline, new Deadline(10_000));
+    const slow = reads.read(() => sleep(300));
+    await vi.advanceTimersByTimeAsync(300);
+    await slow;
+    expect(reads.timeoutMs()).toBe(100);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(reads.timeoutMs()).toBe(50);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(reads.timeoutMs()).toBe(1);
+  });
+
   it('ends on a read cut off within the longest read time of the deadline, and fails on one that hung with more left', async () => {
     vi.useFakeTimers();
     const cut = new EngineError('OPERATION_TIMEOUT', 'locate timed out', { retryable: false });
