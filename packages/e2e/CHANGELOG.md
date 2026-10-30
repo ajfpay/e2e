@@ -1,5 +1,19 @@
 # e2e
 
+## 0.22.1
+
+### Patch Changes
+
+- [#1479](https://github.com/tester-army/e2e/pull/1479) [`d15a98e`](https://github.com/tester-army/e2e/commit/d15a98e0711a185873a7a57a108dd254673e327c) Thanks [@okwasniewski](https://github.com/okwasniewski)! - `app.baseUrl` no longer ends in a slash, so `${app.baseUrl}/api/users` requests `/api/users` instead of `//api/users`. With `test` from `@e2e-dev/web`, `app.baseUrl` is typed `string`, since a `web()` target always declares `app.url`. A test that relied on the trailing slash, such as `${app.baseUrl}api/users` or `new URL('users', app.baseUrl)` on a URL with a path, adds the slash itself.
+
+- [#1478](https://github.com/tester-army/e2e/pull/1478) [`2208056`](https://github.com/tester-army/e2e/commit/22080566738afd2a987ce86d156b27112ba571b0) Thanks [@okwasniewski](https://github.com/okwasniewski)! - `CONFIG_NOT_FOUND` for an explicit config path (`--config <path>`, the MCP `open_session` `config` input, or `openHost({ config: '<path>' })`) now names the absolute path it checked and, for a relative path, the working directory it resolved against.
+
+- [#1480](https://github.com/tester-army/e2e/pull/1480) [`723c1af`](https://github.com/tester-army/e2e/commit/723c1af84ebe70e7c702d5790ae4821c7a8b54b0) Thanks [@okwasniewski](https://github.com/okwasniewski)! - A failed test's block in the terminal and in `summary.md` quotes the first 3 errors the app logged (console errors, uncaught exceptions, failed requests, 5xx responses), so an app error behind a locator failure shows without opening `trace.md`.
+
+- [#1481](https://github.com/tester-army/e2e/pull/1481) [`f078364`](https://github.com/tester-army/e2e/commit/f0783641ef4250b62b8b7600be7384dffc4be2ea) Thanks [@okwasniewski](https://github.com/okwasniewski)! - The `list` summary names the first 10 `app.screenshot` files in a `Screenshots` row, then counts the rest. The MCP `screenshot` tool takes an optional `path` (a `.png`, relative to the project root): it saves the masked full-resolution screenshot there and returns the absolute path.
+
+- [#1483](https://github.com/tester-army/e2e/pull/1483) [`0b84d35`](https://github.com/tester-army/e2e/commit/0b84d35f8cbcbc1a217850ce7aaafde30caa27ea) Thanks [@okwasniewski](https://github.com/okwasniewski)! - `open_session` now names the app command it started: its executable, the URL it answers on, the port a free-port `url` was assigned, and the `env` and `inheritEnv` names it got. It prints no `args` and no `env` values. It also says the config reads the MCP server's environment, not the agent's shell. `e2e run` prints the URL on the app command's setup line, and the `app` setup event carries it as `url`.
+
 ## 0.22.0
 
 ### Minor Changes
