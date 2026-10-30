@@ -53,8 +53,8 @@ reporters: ['list'], // default
   terminal (piped, redirected, most CI), each test prints as it finishes.
 - The [summary rows](#onrunfinished) reporters return print under its
   summary.
-- The output ends with a `Failed` row per failed test: its `file:line`,
-  its error's first line, and its trace page, so `e2e run | tail` still
+- The output ends with a `Failed` row per failed test: its file and line,
+  its error's first line, and its trace page when one was written, so `e2e run | tail` still
   names what broke.
 
 #### `json`

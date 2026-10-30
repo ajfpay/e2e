@@ -146,8 +146,8 @@ hosted service's video by URL.
   ran), `Repeats` (with `--repeat-each`), `Errors`, `Start at`, `Duration`,
   `Traces` (when a page was written), `Screenshots` (the first 10
   `app.screenshot` files, then a count), `AI trace` (with `--ai-trace`), and
-  last `Failed`, one entry per failed test (`file:line`, error's first
-  line, trace page), so `| tail` keeps it. Past a minute `Duration`
+  last `Failed`, one entry per failed test (file and line, error's first
+  line, trace page when written), so `| tail` keeps it. Past a minute `Duration`
   repeats as minutes and seconds, setup time split out as `startup` in the
   same parenthetical (`682.97s (11m 23s, startup 43.00s)`).
 - `report.json`, for scripts rather than reading (`jq`, CI tools; a reader
