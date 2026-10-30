@@ -329,7 +329,7 @@ locator(selector: string): Locator;
 
 ```ts
 // web: a CSS selector
-await screen.getByRole('form', 'Upload').locator('input[name=manifest]').fill('v2');
+await screen.getByRole('form', 'Sign up').locator('input[name=email]').fill('ada@example.com');
 // mobile: an agent-device selector
 await screen.getByRole('list').locator('role=switch').tap();
 ```
