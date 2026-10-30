@@ -216,6 +216,7 @@ export const APP_SOURCE: Readonly<Record<string, string>> = {
     '',
   ].join('\n'),
   'src/components/welcome.tsx': 'export function Welcome({ user }: Props) {\n  return <p className="welcome">Welcome back</p>;\n}\n',
+  'src/lib/dates.ts': 'export function formatDate(date: Date): string {\n  return date.toISOString().slice(0, 10);\n}\n',
   'src/types.ts': 'export interface Book {\n  id: string;\n  title: string;\n  price: number;\n}\n',
   'src/pages/catalog.stories.tsx': 'import { Catalog } from "./catalog";\n\nexport default { component: Catalog };\n\nexport const Empty = { args: { books: [] } };\n',
   'tests/checkout.e2e.ts': [
@@ -573,6 +574,18 @@ export const FIXTURES: readonly PlannerFixture[] = [
       decision: 'explore',
       firstStep: [{ pattern: /welcome|greet|first name/i, reason: 'the change and its test instructions are about the welcome banner' }],
     },
+  },
+  {
+    id: 'pr-names-the-screen',
+    edgeCase: 'A shared date helper changes and only the description says where users see it; the first charter goes to the orders.',
+    change: edit(
+      'src/lib/dates.ts',
+      '  return date.toISOString().slice(0, 10);',
+      "  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });",
+    ),
+    message: 'dates: day, short month, year',
+    pullRequest: { title: 'Readable dates', body: 'Order dates on the Orders page now read like "12 Mar 2026" instead of "2026-03-12".' },
+    expect: { decision: 'explore', firstStep: [{ pattern: /order/i, reason: 'only the description says the Orders page shows the dates' }] },
   },
   {
     id: 'incomplete-brief',

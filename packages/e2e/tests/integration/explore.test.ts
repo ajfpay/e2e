@@ -259,7 +259,7 @@ describe('e2e explore', () => {
         env: { ...process.env, GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath },
       });
       expect(fromPull.notices).toContain("planning from pull request #7's title and description too");
-      expect(planCalls[planned]!.system).toContain('Pull request #7: Show the counter\nDescription:\nOpen the home page and read the counter.');
+      expect(planCalls[planned]!.system).toContain('Pull request #7: Show the counter\nDescription:\n  Open the home page and read the counter.');
       // No change since the ref: a notice, the usual default goal, and no change in the context.
       const unchanged = await runExplore(changed, app, model, { goal: undefined, changedSince: 'HEAD' });
       expect(unchanged.notices).toContain('no files changed since HEAD; exploring the goal without a change');

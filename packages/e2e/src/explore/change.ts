@@ -246,8 +246,11 @@ function renderBrief(
 ): string {
   const sections = [`Changed since ${base.slice(0, 7)}: ${total} file${total === 1 ? '' : 's'}.`];
   if (pullRequest !== undefined) {
+    // Indented, as commit bodies are, so no line of it can pass for a section or a file of the brief.
     const description =
-      pullRequest.description === undefined ? ['No description.'] : [`Description${pullRequest.cut ? ', cut to fit' : ''}:`, pullRequest.description];
+      pullRequest.description === undefined
+        ? ['No description.']
+        : [`Description${pullRequest.cut ? ', cut to fit' : ''}:`, pullRequest.description.replaceAll(/^(?=.)/gmu, '  ')];
     sections.push([`Pull request ${pullRequest.ref}: ${pullRequest.title}`, ...description].join('\n'));
   }
   if (commits.length > 0) sections.push(['Commit messages, newest first:', ...commits].join('\n'));

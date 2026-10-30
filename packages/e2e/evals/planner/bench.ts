@@ -132,7 +132,11 @@ async function execute(run: Run): Promise<RunResult> {
     }
     const planned = report.run.explore;
     if (planned === undefined) return { run, judgements: [], passed: false, durationMs: Date.now() - startedAt, error: 'the report has no run.explore' };
-    const judgements = [...judgeRun(run.fixture.expect, planned), ...(await judgeRubric(run.fixture.expect.rubric ?? [], planned, askRubric))];
+    const judgements = [
+      ...judgeRun(run.fixture.expect, planned),
+      ...(await judgeRubric(run.fixture.expect.rubric ?? [], planned, askRubric)),
+      ...pullRequestRead(run),
+    ];
     return {
       run,
       planned,
@@ -241,6 +245,13 @@ function spawnCli(args: readonly string[], cwd: string, run: Run, appUrl: string
 /** The environment without the job's own GitHub variables: no reporter posts, and the eval's own pull request never reaches a fixture. */
 function fixtureEnv(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GITHUB_')));
+}
+
+/** For a fixture with a pull request, whether the run said it planned from it: a passing run proves nothing if the text never arrived. */
+function pullRequestRead(run: Run): Judgement[] {
+  if (run.fixture.pullRequest === undefined) return [];
+  const pass = readFileSync(path.join(run.dir, 'cli.log'), 'utf8').includes("planning from pull request #42's title and description");
+  return [{ judge: 'pull request read', pass, detail: pass ? 'the run planned from the pull request' : 'the run never read the pull request: no notice in cli.log' }];
 }
 
 /** A GitHub Actions `pull_request` job's variables and event payload, for a fixture with a pull request. */

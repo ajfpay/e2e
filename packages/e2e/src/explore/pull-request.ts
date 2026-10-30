@@ -8,13 +8,14 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { isPlainObject } from '../internal/options.ts';
 
 /** Characters of the title kept. */
 const MAX_TITLE_CHARS = 200;
 /** Bytes of the description kept, in whole lines. */
 const DESCRIPTION_BUDGET_BYTES = 1_500;
-/** A description line longer than this is cut: a pasted log or table says little at full length. */
-const MAX_LINE_CHARS = 500;
+/** Bytes one description line may take, well under the budget: a pasted log or table says little at full length. */
+const MAX_LINE_BYTES = 600;
 
 /** A pull request's text as the brief shows it. */
 export interface PullRequestText {
@@ -52,9 +53,9 @@ function githubPullRequest(eventPath: string): { number: number; title: string; 
   } catch {
     return undefined;
   }
-  const pull = (event as { pull_request?: { number?: unknown; title?: unknown; body?: unknown } } | null)?.pull_request;
-  if (typeof pull?.number !== 'number' || typeof pull.title !== 'string') return undefined;
-  return { number: pull.number, title: pull.title, body: typeof pull.body === 'string' ? pull.body : undefined };
+  const pull = isPlainObject(event) ? event['pull_request'] : undefined;
+  if (!isPlainObject(pull) || typeof pull['number'] !== 'number' || typeof pull['title'] !== 'string') return undefined;
+  return { number: pull['number'], title: pull['title'], body: typeof pull['body'] === 'string' ? pull['body'] : undefined };
 }
 
 /** The title on one line within its cap; the description without template comments, cut to whole lines within its budget. */
@@ -69,7 +70,7 @@ function text(ref: string, title: string, body: string | undefined): PullRequest
   let used = 0;
   const lines = cleaned === '' ? [] : cleaned.split('\n');
   for (const raw of lines) {
-    const capped = raw.length > MAX_LINE_CHARS ? `${raw.slice(0, MAX_LINE_CHARS)}…` : raw;
+    const capped = capBytes(raw, MAX_LINE_BYTES);
     const size = Buffer.byteLength(capped) + 1;
     if (used + size > DESCRIPTION_BUDGET_BYTES) break;
     kept.push(capped);
@@ -82,4 +83,17 @@ function text(ref: string, title: string, body: string | undefined): PullRequest
     description: kept.length === 0 ? undefined : kept.join('\n'),
     cut,
   };
+}
+
+/** `line` within `bytes` of UTF-8, cut between characters and marked with `…` when cut. */
+function capBytes(line: string, bytes: number): string {
+  if (Buffer.byteLength(line) <= bytes) return line;
+  let kept = '';
+  let used = Buffer.byteLength('…');
+  for (const character of line) {
+    used += Buffer.byteLength(character);
+    if (used > bytes) break;
+    kept += character;
+  }
+  return `${kept}…`;
 }

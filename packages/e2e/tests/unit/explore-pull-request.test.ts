@@ -54,6 +54,9 @@ describe('readPullRequest', () => {
     expect(Buffer.byteLength(read.description!)).toBeLessThanOrEqual(1_500);
     expect(lines.join('\n').startsWith(read.description!)).toBe(true);
     const long = readPullRequest({ GITLAB_CI: 'true', CI_MERGE_REQUEST_IID: '1', CI_MERGE_REQUEST_TITLE: 'T', CI_MERGE_REQUEST_DESCRIPTION: 'y'.repeat(800) })!;
-    expect(long).toMatchObject({ description: `${'y'.repeat(500)}…`, cut: true });
+    expect(long).toMatchObject({ description: `${'y'.repeat(597)}…`, cut: true });
+    // A long first paragraph in three-byte characters is cut, never dropped.
+    const wide = readPullRequest({ GITLAB_CI: 'true', CI_MERGE_REQUEST_IID: '1', CI_MERGE_REQUEST_TITLE: 'T', CI_MERGE_REQUEST_DESCRIPTION: `${'中'.repeat(600)}\n${'中'.repeat(600)}` })!;
+    expect(wide).toMatchObject({ description: `${'中'.repeat(199)}…\n${'中'.repeat(199)}…`, cut: true });
   });
 });
