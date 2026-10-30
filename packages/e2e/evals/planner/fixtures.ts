@@ -98,6 +98,7 @@ export const APP_SOURCE: Readonly<Record<string, string>> = {
     '      - run: pnpm test',
     '',
   ].join('\n'),
+  'next.config.js': 'module.exports = {\n  async redirects() {\n    return [];\n  },\n};\n',
   'src/flags.ts': 'export const flags = {\n  newCheckout: process.env.NEW_CHECKOUT === "1",\n};\n',
   'src/lib/pricing.ts': [
     'export function formatPrice(cents: number): string {',
@@ -340,6 +341,13 @@ export const FIXTURES: readonly PlannerFixture[] = [
     },
     message: 'chore(deps): react 19.2.0',
     expect: { decision: 'any' },
+  },
+  {
+    id: 'redirect-config',
+    edgeCase: 'A build config change that redirects the cart reaches users, though no page changes; the planner explores the cart.',
+    change: edit('next.config.js', '    return [];', "    return [{ source: '/cart', destination: '/basket', permanent: true }];"),
+    message: 'config: move the cart to /basket',
+    expect: { decision: 'explore', firstStep: [{ pattern: /cart|basket|redirect/i, reason: 'the redirect changes where the cart lives' }] },
   },
   {
     id: 'ci-workflow-only',
