@@ -5,6 +5,7 @@ import {
   filterExpression,
   indexExpression,
   roleQuery,
+  selectorQuery,
   testIdQuery,
   textQuery,
 } from '../../src/locator/expression.ts';
@@ -53,6 +54,14 @@ describe('locator expressions', () => {
     const scope = testIdQuery('card', undefined, undefined);
     const expression = textQuery('text', 'Pro', undefined, scope);
     expect(expression).toMatchObject({ kind: 'query', scope });
+  });
+
+  it('scopes a selector under a parent expression and rejects an empty one', () => {
+    const scope = roleQuery('form', undefined, undefined);
+    expect(selectorQuery('input[name=manifest]', scope)).toEqual({ kind: 'selector', selector: 'input[name=manifest]', scope });
+    expect(selectorQuery('input', undefined)).toEqual({ kind: 'selector', selector: 'input' });
+    expect(() => selectorQuery('', scope)).toThrowError(expect.objectContaining({ code: 'INVALID_LOCATOR' }));
+    expect(describeExpression(selectorQuery('input', scope))).toBe('getByRole("form") >> locator("input")');
   });
 
   it('rejects empty filters', () => {

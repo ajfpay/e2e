@@ -27,6 +27,7 @@ const KNOWN_KEYS = [
   'performAt',
   'pointerActions',
   'tapModifiers',
+  'scopedSelectors',
   'keyboard',
   'fixtures',
   'state',
@@ -238,6 +239,12 @@ export function defineEngine(spec: Engine): EngineHandle {
       throw invalid(name, 'declares tapModifiers without perform: modifiers ride the tap actions perform receives');
     }
   }
+  if (spec.scopedSelectors !== undefined) {
+    if (typeof spec.scopedSelectors !== 'boolean') throw invalid(name, 'scopedSelectors must be a boolean');
+    if (spec.scopedSelectors && !capabilities.has('location')) {
+      throw invalid(name, 'declares scopedSelectors without locate: the scope rides the expressions locate receives');
+    }
+  }
   if (spec.keyboard !== undefined && !capabilities.has('observation')) {
     throw invalid(name, 'declares keyboard without observe: the focused field is read off the observation');
   }
@@ -255,6 +262,7 @@ export function defineEngine(spec: Engine): EngineHandle {
   }
   if (spec.actions !== undefined) handle['actions'] = declaredKinds(name, 'actions', spec.actions, LOCATOR_ACTION_KINDS);
   if (spec.tapModifiers === true) handle['tapModifiers'] = true;
+  if (spec.scopedSelectors === true) handle['scopedSelectors'] = true;
   if (spec.pointerActions !== undefined) {
     handle['pointerActions'] = declaredKinds(name, 'pointerActions', spec.pointerActions, POINTER_ACTION_KINDS);
   }

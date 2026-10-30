@@ -94,6 +94,7 @@ rules:
 | `perform`, `actions` | One without the other. An `actions` list that is empty, repeats a kind, or names one outside `LOCATOR_ACTION_KINDS`. |
 | `performAt`, `pointerActions` | One without the other. A `pointerActions` list that is empty, repeats a kind, or names one outside `POINTER_ACTION_KINDS`. |
 | `tapModifiers` | Not a boolean, or `true` without `perform`. |
+| `scopedSelectors` | Not a boolean, or `true` without `locate`. |
 | `keyboard`, `state`, `artifacts`, `session` | An unknown key or a non-function member. `keyboard` without `type` and `press`; `state` without both `capture` and `restore`; `artifacts` without `screenshot`; `startVideo` without `stopVideo`, or the reverse. |
 | `secrets` | Not an array of `secrets.get()` handles. |
 | `fixtures` | Not an object, a fixture that is not a factory function, or a fixture name that is not a lower-camel identifier or shadows `agent`, `app`, `screen`, `platform`, or `session`. |
@@ -122,6 +123,7 @@ The body of one target. Every member but `name`, `version`, and
 | [`locate`](#capabilities) | method |
 | [`performAt`, `pointerActions`](#pointer-actions) | method, kinds |
 | [`tapModifiers`](#capabilities) | `boolean` |
+| [`scopedSelectors`](#capabilities) | `boolean` |
 | [`keyboard`](#keyboard) | `EngineKeyboard` |
 | [`fixtures`](#contributed-fixtures) | factories |
 | [`state`](#state) | `EngineStateCapability` |
@@ -220,6 +222,12 @@ export interface Engine {
    * reaches the engine.
    */
   readonly tapModifiers?: boolean;
+  /**
+   * The surface honors a `scope` on the `selector` expressions `locate`
+   * receives. Without it the harness fails a scoped selector with
+   * `UNSUPPORTED_CAPABILITY` before it reaches the engine.
+   */
+  readonly scopedSelectors?: boolean;
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
   readonly keyboard?: EngineKeyboard;
   /**
@@ -350,6 +358,7 @@ member. Three gaps end differently:
 | `perform` + `actions` | `actions` | `observe` | Node actions of the declared kinds, with platform actionability checks. |
 | `locate` | `location` | `observe` | `screen`, `Locator`, `expect(locator)`. |
 | `tapModifiers: true` | - | `perform` | `modifiers` on `tap`, `doubleTap`, and `secondaryTap`. |
+| `scopedSelectors: true` | - | `locate` | `locator.locator(selector)`. |
 | `performAt` + `pointerActions` | `pointer` | `observe` | One pointer action at a viewport point, with no node behind it. |
 | `keyboard.{type,press,dismiss?}` | `keyboard` | `observe` | Input to whatever holds focus. |
 | `fixtures.<name>` | `<name>` | - | A contributed fixture. |
@@ -403,8 +412,8 @@ An undeclared verb is absent from the toolset.
 
 The test-facing APIs each engine member backs. A `screen` or `Locator`
 method for an undeclared kind, or a call with `modifiers` and no
-`tapModifiers`, fails with `UNSUPPORTED_CAPABILITY` before it reaches the
-engine.
+`tapModifiers`, or `locator.locator(selector)` with no `scopedSelectors`,
+fails with `UNSUPPORTED_CAPABILITY` before it reaches the engine.
 
 | API | Needs |
 | --- | --- |
@@ -412,6 +421,7 @@ engine.
 | `screen` and `Locator` actions | `perform`, each only for a kind listed in `actions` |
 | `screen.swipe()` | `perform` with `swipe` on the observation root |
 | `modifiers` on a tap (`row.click({ modifiers: ['Shift'] })`) | `tapModifiers: true`; the keys are held for the click |
+| `locator.locator(selector)` | `scopedSelectors: true` and a selector language |
 | `screen.tapAt`, `tap({ position })` | `performAt` with the `tap` pointer kind |
 | `screen.swipe({ from, to })` | `performAt` with the `swipeTo` pointer kind |
 | `locator.pressSequentially` | the `focus` action and `keyboard`; the harness composes `focus` then `keyboard.type` |
@@ -1526,7 +1536,9 @@ async locate(expression) {
   a descendant's text.
 - An engine whose tree is the whole truth (a device) calls it; a browser
   engine reproduces it.
-- A `selector` expression needs the `selector` option.
+- A `selector` expression needs the `selector` option, which gets only the
+  scope's strict descendants when the expression has a `scope`. Declare
+  `scopedSelectors: true` with it.
 - A `frame` expression is `FRAME_NOT_FOUND`.
 - A `union` expression matches either branch in document order, without duplicate nodes.
 
@@ -2235,8 +2247,9 @@ export interface SemanticNode {
 
 ### Queries
 
-The `selector` expression kind carries a platform-native selector string;
-`frame` scopes a query into a nested document.
+The `selector` expression kind carries a platform-native selector string.
+A `scope` on a query or a selector keeps only strict descendants of the
+scope's matches. `frame` scopes a query into a nested document.
 
 ```ts
 /** The `screen` query kinds. */

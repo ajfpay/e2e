@@ -586,6 +586,12 @@ export interface Locator extends Omit<Screen, 'tree' | 'debug'> {
   waitFor(options?: { state?: 'attached' | 'detached' | 'visible' | 'hidden'; timeout?: number }): Promise<void>;
   /** Adds deterministic locator filters. */
   filter(options: { hasText?: TextMatch; hasNotText?: TextMatch; has?: Locator; hasNot?: Locator }): Locator;
+  /**
+   * Matches the target's native selector inside this locator's matches, in
+   * the language its engine fixture's `locator` takes. A target without a
+   * selector language fails with `UNSUPPORTED_CAPABILITY`.
+   */
+  locator(selector: string): Locator;
   /** Matches either locator, deduplicated in traversal order; both must belong to this screen. */
   or(other: Locator): Locator;
   /** Selects the first current match. */

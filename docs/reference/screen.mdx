@@ -281,6 +281,7 @@ Prefer it over `browser.locator('p:visible')`, which ties the test to CSS.
 | Method | Returns |
 | --- | --- |
 | [`filter`](#filter) | `Locator` |
+| [`locator`](#locator) | `Locator` |
 | [`or`](#or) | `Locator` |
 | [`first`](#first) | `Locator` |
 | [`last`](#last) | `Locator` |
@@ -314,6 +315,32 @@ await row.getByRole('button', 'Void').tap();
 | `INVALID_LOCATOR` | None of `hasText`, `hasNotText`, `has`, or `hasNot` is given. |
 | `INVALID_LOCATOR` | Any other key, even beside them: `visible` is not a filter here. |
 | `INVALID_LOCATOR` | `has` or `hasNot` is not a runner locator, or was made by another target's screen. |
+
+#### `locator`
+
+```ts
+/**
+ * Matches the target's native selector inside this locator's matches, in
+ * the language its engine fixture's `locator` takes. A target without a
+ * selector language fails with `UNSUPPORTED_CAPABILITY`.
+ */
+locator(selector: string): Locator;
+```
+
+```ts
+const upload = screen.getByRole('form', 'Upload');
+await upload.locator('input[name=manifest]').setInputFiles('fixtures/manifest.json');
+```
+
+The selector language is [`browser.locator`](/reference/web#locator)'s on web
+and [`device.locator`](/reference/mobile#locator)'s on mobile. Only strict
+descendants of a match count. Prefer a `getBy*` query when the control has a
+role, label, or test id.
+
+| Throws | When |
+| --- | --- |
+| `INVALID_LOCATOR` | An empty selector. |
+| `UNSUPPORTED_CAPABILITY` | The target has no selector language, or its engine does not declare `scopedSelectors`. |
 
 #### `or`
 

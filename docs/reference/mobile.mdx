@@ -478,6 +478,8 @@ find ... list` applies:
 - `visible` means the node is hittable or has a non-empty frame; `hidden` is
   its opposite.
 - `text` reads the first non-empty label, value, or identifier.
+- Any locator scopes a selector to its matches:
+  `screen.getByRole('list').locator('role=switch')`.
 
 <Note>
 An action on a selector that matches several nodes fails, where an

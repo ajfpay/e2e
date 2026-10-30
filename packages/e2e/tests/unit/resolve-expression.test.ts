@@ -196,6 +196,15 @@ describe('resolveExpression', () => {
     );
   });
 
+  it('hands a scoped selector only the strict descendants of the scope', () => {
+    const anyTestId = (_selector: string, candidates: readonly SemanticNode[]): SemanticNode[] =>
+      candidates.filter((candidate) => candidate.testId !== undefined);
+    const resolveIds = (expression: LocatorExpression) =>
+      resolveExpression(expression, SETTINGS, { selector: anyTestId }).map((m) => m.ref.id);
+    expect(resolveIds({ kind: 'selector', selector: 'id', scope: query('role', 'navigation') })).toEqual(['back']);
+    expect(resolveIds({ kind: 'selector', selector: 'id', scope: query('role', 'button') })).toEqual([]);
+  });
+
   it('rejects frames, since a semantic tree has no nested documents', () => {
     expect(() => ids({ kind: 'frame', selector: 'iframe', source: query('role', 'button') })).toThrowError(
       expect.objectContaining({ code: 'FRAME_NOT_FOUND', retryable: false }),

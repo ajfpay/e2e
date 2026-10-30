@@ -40,6 +40,7 @@ import {
   filterExpression,
   indexExpression,
   roleQuery,
+  selectorQuery,
   testIdQuery,
   textQuery,
 } from './expression.ts';
@@ -661,6 +662,10 @@ class LocatorImpl extends ScreenImpl implements Locator {
         ...(hasNotExpression !== undefined ? { hasNot: hasNotExpression } : {}),
       }),
     );
+  }
+
+  locator(selector: string): Locator {
+    return new LocatorImpl(this.context, selectorQuery(selector, this.expression));
   }
 
   or(other: Locator): Locator {

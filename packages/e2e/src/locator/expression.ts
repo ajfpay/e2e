@@ -81,6 +81,14 @@ export function testIdQuery(
   );
 }
 
+/** Builds a platform-native selector expression; an empty selector is an immediate error. */
+export function selectorQuery(selector: string, scope: LocatorExpression | undefined): LocatorExpression {
+  if (typeof selector !== 'string' || selector.length === 0) {
+    throw new TestError('INVALID_LOCATOR', 'locator() requires a nonempty selector');
+  }
+  return scope === undefined ? { kind: 'selector', selector } : { kind: 'selector', selector, scope };
+}
+
 function scoped(
   expression: Extract<LocatorExpression, { kind: 'query' }>,
   scope: LocatorExpression | undefined,
@@ -182,8 +190,10 @@ export function describeExpression(expression: LocatorExpression): string {
       return typeof expression.index === 'number'
         ? `${describeExpression(expression.source)}.nth(${expression.index})`
         : `${describeExpression(expression.source)}.${expression.index}()`;
-    case 'selector':
-      return `locator(${JSON.stringify(expression.selector)})`;
+    case 'selector': {
+      const scope = expression.scope === undefined ? '' : `${describeExpression(expression.scope)} >> `;
+      return `${scope}locator(${JSON.stringify(expression.selector)})`;
+    }
     case 'frame':
       return `frameLocator(${JSON.stringify(expression.selector)}) >> ${describeExpression(expression.source)}`;
   }

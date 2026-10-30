@@ -71,6 +71,16 @@ describe('defineEngine', () => {
     );
   });
 
+  it('carries scopedSelectors onto the handle only with locate, and only as a boolean', () => {
+    const locate = async () => [];
+    expect(defineEngine(observingEngine({ locate, scopedSelectors: true })).scopedSelectors).toBe(true);
+    expect(defineEngine(observingEngine({ locate, scopedSelectors: false })).scopedSelectors).toBeUndefined();
+    expect(() => defineEngine(observingEngine({ scopedSelectors: true }))).toThrow(/scopedSelectors without locate/);
+    expect(() => defineEngine(observingEngine({ locate, scopedSelectors: 'yes' as never }))).toThrow(
+      /scopedSelectors must be a boolean/,
+    );
+  });
+
   it('closes the action list: known kinds, each once, at least one', () => {
     const withActions = (actions: unknown) =>
       defineEngine(observingEngine({ actions: actions as never, perform: async () => undefined }));

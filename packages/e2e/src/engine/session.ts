@@ -30,6 +30,7 @@ import {
   type EnvironmentFacts,
   type GrammarVerb,
   type LocatorActionKind,
+  type LocatorExpression,
   type NodeRef,
   type Observation,
   type PointerActionKind,
@@ -287,6 +288,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
   const performAtRaw = guard('point actions', engine?.performAt);
   const pointerActions: ReadonlySet<PointerActionKind> = new Set(engine?.pointerActions ?? []);
   const tapModifiers = engine?.tapModifiers === true;
+  const scopedSelectors = engine?.scopedSelectors === true;
 
   const app: SessionApp = {
     open: guard('navigation', engine?.session?.open),
@@ -403,6 +405,7 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
       return observation;
     },
     async locate(expression, operation) {
+      if (!scopedSelectors && scopesSelector(expression)) unsupported('a selector scoped to a locator');
       // An engine answers `visible` inside scopes, filters, and indices, where
       // only it can; the harness holds a top-level query to the same predicate
       // so a direct query never resolves to a node its own state calls hidden.
@@ -471,4 +474,25 @@ export function createEngineSession(options: EngineSessionOptions): TargetSessio
     }),
   };
   return session;
+}
+
+/** Whether any `selector` in the expression carries a `scope`. */
+function scopesSelector(expression: LocatorExpression): boolean {
+  switch (expression.kind) {
+    case 'selector':
+      return expression.scope !== undefined;
+    case 'query':
+      return expression.scope !== undefined && scopesSelector(expression.scope);
+    case 'filter':
+      return (
+        scopesSelector(expression.source) ||
+        (expression.has !== undefined && scopesSelector(expression.has)) ||
+        (expression.hasNot !== undefined && scopesSelector(expression.hasNot))
+      );
+    case 'index':
+    case 'frame':
+      return scopesSelector(expression.source);
+    case 'union':
+      return scopesSelector(expression.left) || scopesSelector(expression.right);
+  }
 }

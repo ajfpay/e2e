@@ -183,7 +183,9 @@ substring; a `RegExp` matches as written.
 - Narrow with `filter({ hasText })` (a case-insensitive substring, unlike a
   query), `filter({ hasNotText })` to exclude matching subtree text,
   `filter({ has: locator })`, `filter({ hasNot: locator })`, `first()`,
-  `last()`, `nth(i)`, or scoping under another locator. Any other `filter`
+  `last()`, `nth(i)`, scoping under another locator, or
+  `locator.locator(selector)`, the platform selector (`browser.locator`'s,
+  `device.locator`'s) inside its matches. Any other `filter`
   key (`visible`) or an empty `filter({})` is `INVALID_LOCATOR`. `a.or(b)`
   matches either, still strict: add `first()` when both may match. Both
   locators must come from the same screen and attempt. Web branches need

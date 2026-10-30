@@ -37,6 +37,7 @@ export function buildEngine(surface: AgentDeviceSurface): EngineHandle {
     // input enforces its own; see InputBudget in support.ts.
     perform: (ref, action, operation) => surface.perform(ref, action, operation, surface.inputBudget(action.kind, operation.timeoutMs)),
     actions: DEVICE_ACTIONS,
+    scopedSelectors: true,
     performAt: (point, action, operation) => surface.performAt(point, action, operation, surface.inputBudget(action.kind, operation.timeoutMs)),
     pointerActions: DEVICE_POINTER_ACTIONS,
     keyboard: {

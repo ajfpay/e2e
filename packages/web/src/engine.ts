@@ -122,6 +122,7 @@ export function web(options: WebOptions = {}): EngineHandle {
     actions: LOCATOR_ACTION_KINDS,
     // Playwright holds each modifier for the click.
     tapModifiers: true,
+    scopedSelectors: true,
     // A page takes every pointer action of the contract at a bare point too.
     performAt: (point, action, operation) => surface.performAt(point, action, operation),
     pointerActions: POINTER_ACTION_KINDS,

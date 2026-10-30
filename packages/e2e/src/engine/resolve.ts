@@ -124,7 +124,11 @@ function resolve(
           { retryable: false },
         );
       }
-      return [...options.selector(expression.selector, candidates)];
+      const pool =
+        expression.scope === undefined
+          ? candidates
+          : descendantsOf(resolve(expression.scope, candidates, tree, options), candidates, tree);
+      return [...options.selector(expression.selector, pool)];
     }
     case 'frame':
       throw new EngineError(

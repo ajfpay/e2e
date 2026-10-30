@@ -772,6 +772,14 @@ export interface Engine {
    * that predates the field never drops one silently.
    */
   readonly tapModifiers?: boolean;
+  /**
+   * The surface honors a `scope` on the `selector` expressions `locate`
+   * receives, matching only strict descendants of the scope's matches.
+   * Without it the harness fails a scoped selector with
+   * `UNSUPPORTED_CAPABILITY` before it reaches the engine, so an engine that
+   * predates the field never matches outside the scope silently.
+   */
+  readonly scopedSelectors?: boolean;
   /** capability: keyboard - requires observation. Input to whatever holds focus; see `EngineKeyboard`. */
   readonly keyboard?: EngineKeyboard;
   /**

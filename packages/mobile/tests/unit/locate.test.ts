@@ -137,6 +137,8 @@ describe('locator expressions over a device snapshot', () => {
     expect(names({ kind: 'selector', selector: 'id=ABOUT' })).toEqual(['About']);
     expect(names({ kind: 'selector', selector: 'id=NOPE || label="Airplane Mode"' })).toEqual(['Airplane Mode']);
     expect(() => names({ kind: 'selector', selector: '@e3' })).toThrow(/invalid agent-device selector/);
+    expect(names({ kind: 'selector', selector: 'role=button', scope: query('role', 'navigation') })).toEqual(['Back']);
+    expect(names({ kind: 'selector', selector: 'id=ABOUT', scope: query('role', 'navigation') })).toEqual([]);
     expect(() => names({ kind: 'frame', selector: 'iframe', source: query('role', 'button') })).toThrowError(
       expect.objectContaining({ code: 'FRAME_NOT_FOUND' }),
     );

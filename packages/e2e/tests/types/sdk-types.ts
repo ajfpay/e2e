@@ -446,6 +446,11 @@ void (screen.getByRole('row').filter({ hasNot: screen.getByRole('status') }) sat
 void (screen.getByRole('row').filter({ hasText: 'Invoice', hasNot: screen.getByText('Paid') }) satisfies Locator);
 // @ts-expect-error hasNot takes a locator, not text
 void screen.getByRole('row').filter({ hasNot: 'Paid' });
+void (screen.getByRole('form').locator('input[name=manifest]').getByRole('textbox') satisfies Locator);
+// @ts-expect-error a selector is a string
+void screen.getByRole('form').locator(screen.getByRole('textbox'));
+// @ts-expect-error selectors chain off a locator; screen keeps semantic queries
+void screen.locator('input');
 
 // expect.poll carries every value matcher and no other, each resolving to void.
 declare const pollMatcherNames: Exclude<keyof PollExpectation<string>, 'not'>;

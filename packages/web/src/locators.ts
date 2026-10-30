@@ -337,8 +337,13 @@ function project(scope: PwScope, expression: LocatorExpression, testIdAttribute:
       }
       return plain(positioned(source.locator, expression.index));
     }
-    case 'selector':
-      return plain(scope.locator(expression.selector));
+    case 'selector': {
+      const inner =
+        expression.scope === undefined
+          ? scope
+          : requireComposable(project(scope, expression.scope, testIdAttribute));
+      return plain(inner.locator(expression.selector));
+    }
     case 'frame':
       return project(scope.frameLocator(expression.selector), expression.source, testIdAttribute);
   }
@@ -412,12 +417,11 @@ export function frameSelectors(expression: LocatorExpression): string[] {
       return left;
     }
     case 'query':
+    case 'selector':
       return expression.scope === undefined ? [] : frameSelectors(expression.scope);
     case 'filter':
     case 'index':
       return frameSelectors(expression.source);
-    case 'selector':
-      return [];
     case 'frame':
       return [expression.selector, ...frameSelectors(expression.source)];
   }

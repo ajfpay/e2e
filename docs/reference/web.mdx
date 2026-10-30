@@ -532,6 +532,7 @@ const conditions = browser.locator(
 - The selector is CSS by default, XPath with `xpath=` or a leading `//`, and
   takes `>>` chains, so the example scopes CSS to one row.
 - Use `filter({ has })` for an element that contains another.
+- Any locator scopes a selector to its matches: `form.locator('input')`.
 
 | Throws | When |
 | --- | --- |

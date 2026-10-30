@@ -52,6 +52,16 @@ test.describe('frames', { requires: ['browser'] }, () => {
     );
   });
 
+  test('a selector chained off a frame query stays inside the frame', async ({ app, screen, browser }) => {
+    await app.open('/frames');
+    const editor = browser.frameLocator('#editor');
+    const nav = editor.getByRole('navigation', 'Main');
+    await expect(nav.locator('a[href="/frames"]')).toHaveCount(1);
+    await nav.locator('a[href="/forms"]').tap();
+    await expect(editor.getByRole('heading', 'Forms')).toBeVisible();
+    await expect(screen.getByRole('heading', 'Frames')).toBeVisible();
+  });
+
   test('frame queries do not leak into the host page', async ({ app, screen, browser }) => {
     await app.open('/frames');
     await expect(screen.getByRole('heading', 'Frames')).toBeVisible();

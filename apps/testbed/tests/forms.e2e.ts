@@ -27,6 +27,14 @@ test.describe('forms', { tags: ['forms'] }, () => {
     );
   });
 
+  test('scopes a CSS selector to a locator', async ({ screen }) => {
+    const notifications = screen.getByRole('group', 'Notifications');
+    await expect(notifications.locator('input[type=checkbox]')).toHaveCount(2);
+    await expect(notifications.locator('#name')).toHaveCount(0);
+    await notifications.locator('#email-notifications').check();
+    await expect(screen.getByLabel('Email notifications')).toBeChecked();
+  });
+
   test('validates required fields', async ({ screen }) => {
     await screen.getByLabel('Full name').fill('temp');
     await screen.getByLabel('Full name').clear();
