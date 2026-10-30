@@ -34,6 +34,7 @@ import type {
   EngineInitInfo,
   EnginePrepareInfo,
   EnginePrepareResult,
+  EngineSession,
   LocatorExpression,
   OperationContext,
 } from '../index.ts';
@@ -88,6 +89,12 @@ export interface ConnectEngineOptions {
    * produce a tree.
    */
   readonly resolveLocators?: boolean;
+  /**
+   * Session hooks this process answers instead of the server, such as a
+   * relaunch the host makes from outside a device. Each one wins over the
+   * server's method of the same name.
+   */
+  readonly session?: EngineSession;
 }
 
 /**
@@ -210,6 +217,9 @@ class EngineClient {
       const observe = members['observe'] as NonNullable<Engine['observe']>;
       members['locate'] = async (expression: LocatorExpression, operation: OperationContext) =>
         resolveExpression(expression, (await observe(operation)).root.children ?? []);
+    }
+    if (this.#options.session !== undefined) {
+      members['session'] = { ...(members['session'] as EngineSession | undefined), ...this.#options.session };
     }
     const runs = has('lifecycle/prepare') || has('lifecycle/finish');
     const engine: Engine = {

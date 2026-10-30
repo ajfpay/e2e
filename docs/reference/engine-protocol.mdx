@@ -70,6 +70,8 @@ export interface ConnectEngineOptions {
   readonly validateApp?: Engine['validateApp'];
   /** Answers locators on the client from observations, for a server without `engine/locate`. */
   readonly resolveLocators?: boolean;
+  /** Session hooks the client answers instead of the server. */
+  readonly session?: EngineSession;
 }
 ```
 
@@ -104,6 +106,10 @@ trust, over a channel you trust: `socketTransport` sends it unencrypted.
 `fixtures`, `validateApp`, and `secrets` stay on the client: they hold
 functions and handles that cannot cross a connection. A fixture reaches the
 server through the handle's own members.
+
+`session` hooks also run on the client, each in place of the server's method
+of the same name. Use them for what only the host can do, such as relaunching
+an app on a simulator.
 
 | Throws | When |
 | --- | --- |

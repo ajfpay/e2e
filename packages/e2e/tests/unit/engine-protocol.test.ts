@@ -326,6 +326,18 @@ describe('engine protocol', () => {
     expect(calls).toEqual(['dispose', 'dispose', 'finish']);
   });
 
+  it('answers session hooks the client declares instead of the server', async () => {
+    const calls: string[] = [];
+    const { remote } = overLoopback(toy({ session: { back: async () => { calls.push('server back'); } } }), {
+      session: { restart: async () => { calls.push('client restart'); } },
+    });
+    await remote.init!(initInfo());
+    await remote.session!.back!(operation());
+    await remote.session!.restart!(operation());
+    expect(calls).toEqual(['server back', 'client restart']);
+    await remote.dispose!(cleanup);
+  });
+
   it('answers locators on the client from observations when asked to', async () => {
     const { remote } = overLoopback(toy(), { resolveLocators: true });
     expect(remote.capabilities.has('location')).toBe(true);
