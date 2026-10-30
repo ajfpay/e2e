@@ -148,7 +148,7 @@ uses it declares `requires: ['browser']` and other targets skip it. Calls on
 | `page.locator('css')`, `page.locator('xpath=...')` | `browser.locator('css')`: the string is a Playwright selector, so `xpath=` (or a leading `//`) and `>>` chains work too | web only |
 | `page.waitForSelector(selector)` | `browser.locator(selector).waitFor()`; a locator is strict, see [What differs on purpose](#what-differs-on-purpose) | renamed |
 | `page.click(selector)`, `page.fill(selector, value)`, `page.getAttribute(selector, name)`, and the other `page` methods that take a selector | `browser.locator(selector).tap()`, `.fill(value)`, `.getAttribute(name)`. Playwright acts on the first match; a locator is strict, so add `first()` for the old behavior, see [What differs on purpose](#what-differs-on-purpose) | renamed |
-| `locator.locator('css')` | the same; prefer a semantic query inside the scope (`cell.getByRole('textbox')` for `cell.locator('input')`) | same |
+| `locator.locator('css')` | the same, with `browser.locator`'s selectors; prefer a semantic query inside the scope (`cell.getByRole('textbox')` for `cell.locator('input')`) | same |
 | `page.frameLocator('#frame')` | `browser.frameLocator('#frame')`, then `screen` queries inside it | web only |
 
 </Accordion>

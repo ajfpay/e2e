@@ -185,7 +185,8 @@ substring; a `RegExp` matches as written.
   `filter({ has: locator })`, `filter({ hasNot: locator })`, `first()`,
   `last()`, `nth(i)`, scoping under another locator, or
   `locator.locator(selector)`, the platform selector (`browser.locator`'s,
-  `device.locator`'s) inside its matches. Any other `filter`
+  `device.locator`'s) evaluated from its matches; an engine without
+  `scopedSelectors` fails it with `UNSUPPORTED_CAPABILITY`. Any other `filter`
   key (`visible`) or an empty `filter({})` is `INVALID_LOCATOR`. `a.or(b)`
   matches either, still strict: add `first()` when both may match. Both
   locators must come from the same screen and attempt. Web branches need

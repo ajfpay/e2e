@@ -82,10 +82,12 @@ export interface SemanticQuery {
 /**
  * The location capability's query language. `selector` is a platform-native
  * selector string (CSS or XPath on a document platform, a predicate on a
- * device platform); a `scope` on a query or a selector keeps only strict
- * descendants of the scope's matches; `frame` scopes a query inside one
- * nested document; `union` matches either side, each node once, in document
- * order.
+ * device platform); a `scope` on a query keeps only strict descendants of
+ * the scope's matches, and on a selector evaluates it from each of them, as
+ * the selector language does (strict descendants for CSS and a device
+ * predicate, while XPath `..` reaches the parent); `frame` scopes a query
+ * inside one nested document; `union` matches either side, each node once,
+ * in document order.
  */
 export type LocatorExpression =
   | {

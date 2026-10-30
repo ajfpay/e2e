@@ -328,14 +328,17 @@ locator(selector: string): Locator;
 ```
 
 ```ts
-const upload = screen.getByRole('form', 'Upload');
-await upload.locator('input[name=manifest]').setInputFiles('fixtures/manifest.json');
+// web: a CSS selector
+await screen.getByRole('form', 'Upload').locator('input[name=manifest]').fill('v2');
+// mobile: an agent-device selector
+await screen.getByRole('list').locator('role=switch').tap();
 ```
 
 The selector language is [`browser.locator`](/reference/web#locator)'s on web
-and [`device.locator`](/reference/mobile#locator)'s on mobile. Only strict
-descendants of a match count. Prefer a `getBy*` query when the control has a
-role, label, or test id.
+and [`device.locator`](/reference/mobile#locator)'s on mobile, evaluated from
+each match. CSS and agent-device selectors match descendants only; on web an
+XPath `..` reaches the parent, as in Playwright. Prefer a `getBy*` query when
+the control has a role, label, or test id.
 
 | Throws | When |
 | --- | --- |

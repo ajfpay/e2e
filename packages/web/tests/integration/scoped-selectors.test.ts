@@ -62,6 +62,12 @@ describe('scoped selectors', () => {
     expect(await values({ kind: 'selector', selector: '//input', scope: form('Upload') })).toEqual(['Upload manifest']);
   });
 
+  it('evaluates XPath from each match, so .. reaches the parent as in Playwright', async () => {
+    const parents = await engine.locate!({ kind: 'selector', selector: 'xpath=..', scope: form('Import') }, operation);
+    expect(parents).toHaveLength(1);
+    expect(parents[0]!.role).not.toBe('form');
+  });
+
   it('scopes a query under a scoped selector, and a selector under a filtered scope', async () => {
     const button: LocatorExpression = {
       kind: 'query',
