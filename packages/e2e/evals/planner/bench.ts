@@ -223,7 +223,7 @@ function spawnCli(args: readonly string[], cwd: string, run: Run, appUrl: string
   const log: Buffer[] = [];
   const child = spawn(process.execPath, args, {
     cwd,
-    env: { ...fixtureEnv(), APP_URL: appUrl, PLANNER_EVAL_MODEL: run.model, E2E_TELEMETRY_DISABLED: '1', E2E_UPDATE_CHECK_DISABLED: '1', FORCE_COLOR: '0', CI: '1' },
+    env: { ...fixtureEnv(), ...pullRequestEnv(run), APP_URL: appUrl, PLANNER_EVAL_MODEL: run.model, E2E_TELEMETRY_DISABLED: '1', E2E_UPDATE_CHECK_DISABLED: '1', FORCE_COLOR: '0', CI: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk: Buffer) => log.push(chunk));
@@ -241,6 +241,15 @@ function spawnCli(args: readonly string[], cwd: string, run: Run, appUrl: string
 /** The environment without the job's own GitHub variables: no reporter posts, and the eval's own pull request never reaches a fixture. */
 function fixtureEnv(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GITHUB_')));
+}
+
+/** A GitHub Actions `pull_request` job's variables and event payload, for a fixture with a pull request. */
+function pullRequestEnv(run: Run): NodeJS.ProcessEnv {
+  const pull = run.fixture.pullRequest;
+  if (pull === undefined) return {};
+  const eventPath = path.join(run.dir, 'event.json');
+  writeFileSync(eventPath, JSON.stringify({ pull_request: { number: 42, title: pull.title, body: pull.body ?? null } }));
+  return { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'pull_request', GITHUB_EVENT_PATH: eventPath };
 }
 
 /** The bookshop's screens after the change, as a preview deploy serves them: the fixture's own over the shop's, a removed one gone from the nav too. */
