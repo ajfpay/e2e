@@ -71,7 +71,8 @@ function text(ref: string, title: string, body: string | undefined): PullRequest
   const lines = cleaned === '' ? [] : cleaned.split('\n');
   for (const raw of lines) {
     const capped = capBytes(raw, MAX_LINE_BYTES);
-    const size = Buffer.byteLength(capped) + 1;
+    // The line, the two spaces the brief indents it by, and its newline.
+    const size = Buffer.byteLength(capped) + 3;
     if (used + size > DESCRIPTION_BUDGET_BYTES) break;
     kept.push(capped);
     used += size;

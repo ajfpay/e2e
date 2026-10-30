@@ -51,7 +51,8 @@ describe('readPullRequest', () => {
     const read = readPullRequest({ GITLAB_CI: 'true', CI_MERGE_REQUEST_IID: '1', CI_MERGE_REQUEST_TITLE: 't'.repeat(300), CI_MERGE_REQUEST_DESCRIPTION: lines.join('\n') })!;
     expect(read.title).toBe(`${'t'.repeat(199)}…`);
     expect(read.cut).toBe(true);
-    expect(Buffer.byteLength(read.description!)).toBeLessThanOrEqual(1_500);
+    // Within the budget as the brief shows it, each line indented.
+    expect(Buffer.byteLength(read.description!.replaceAll(/^/gmu, '  '))).toBeLessThanOrEqual(1_500);
     expect(lines.join('\n').startsWith(read.description!)).toBe(true);
     const long = readPullRequest({ GITLAB_CI: 'true', CI_MERGE_REQUEST_IID: '1', CI_MERGE_REQUEST_TITLE: 'T', CI_MERGE_REQUEST_DESCRIPTION: 'y'.repeat(800) })!;
     expect(long).toMatchObject({ description: `${'y'.repeat(597)}…`, cut: true });

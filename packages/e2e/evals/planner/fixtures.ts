@@ -570,6 +570,7 @@ export const FIXTURES: readonly PlannerFixture[] = [
       title: 'Greet signed-in users by first name',
       body: '## How to test\n\n1. Sign in (any made-up account works on preview deploys).\n2. The banner on the catalog should read "Welcome back, <first name>".',
     },
+    screens: { '/': `<p><a href="/account">Sign in</a> to see your welcome banner.</p>${catalogScreen('Add to cart')}` },
     expect: {
       decision: 'explore',
       firstStep: [{ pattern: /welcome|greet|first name/i, reason: 'the change and its test instructions are about the welcome banner' }],
@@ -585,6 +586,7 @@ export const FIXTURES: readonly PlannerFixture[] = [
     ),
     message: 'dates: day, short month, year',
     pullRequest: { title: 'Readable dates', body: 'Order dates on the Orders page now read like "12 Mar 2026" instead of "2026-03-12".' },
+    screens: { '/orders': '<ol><li>Order 1001, placed 12 Mar 2026: $32.99</li><li>Order 1002, placed 3 Apr 2026: $18.00</li></ol>' },
     expect: { decision: 'explore', firstStep: [{ pattern: /order/i, reason: 'only the description says the Orders page shows the dates' }] },
   },
   {
