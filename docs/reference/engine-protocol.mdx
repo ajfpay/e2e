@@ -2,8 +2,6 @@
 title: Engine protocol
 description: Run an engine in another process, on another machine, or in another language.
 icon: "network-wired"
-"og:image": "https://e2e.tester.army/docs/images/og/reference/engine-protocol.png?v=92b4fccfd9"
-"twitter:image": "https://e2e.tester.army/docs/images/og/reference/engine-protocol.png?v=92b4fccfd9"
 ---
 
 The engine protocol is the [engine contract](/reference/engine) as JSON-RPC
@@ -12,13 +10,21 @@ another process, machine, or language, see
 [Engine servers](/engine-servers).
 
 ```ts title="e2e.config.ts"
+import type { E2EConfig } from 'e2e';
 import { connectEngine, spawnTransport } from 'e2e/engine';
 
-engine: connectEngine({
-  manifest: { name: 'kiosk', version: '1.0.0', spiVersion: 1, methods: ['engine/observe'] },
-  transport: spawnTransport({ command: './kiosk-engine' }),
-  resolveLocators: true,
-}),
+export default {
+  targets: [
+    {
+      name: 'kiosk',
+      engine: connectEngine({
+        manifest: { name: 'kiosk', version: '1.0.0', spiVersion: 1, methods: ['engine/observe'] },
+        transport: spawnTransport({ command: './kiosk-engine' }),
+        resolveLocators: true,
+      }),
+    },
+  ],
+} satisfies E2EConfig;
 ```
 
 ## Reference

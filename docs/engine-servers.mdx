@@ -91,11 +91,22 @@ await serveEngine((options) => kiosk(options as { host: string }));
 ```
 
 ```ts title="e2e.config.ts"
-engine: connectEngine({
-  manifest: describeEngine(kiosk({ host: 'localhost' })),
-  transport: spawnTransport({ command: 'node', args: ['server.ts'] }),
-  initializationOptions: { host: 'localhost' },
-}),
+import type { E2EConfig } from 'e2e';
+import { connectEngine, describeEngine, spawnTransport } from 'e2e/engine';
+import { kiosk } from './src/index.ts';
+
+export default {
+  targets: [
+    {
+      name: 'kiosk',
+      engine: connectEngine({
+        manifest: describeEngine(kiosk({ host: 'localhost' })),
+        transport: spawnTransport({ command: 'node', args: ['server.ts'] }),
+        initializationOptions: { host: 'localhost' },
+      }),
+    },
+  ],
+} satisfies E2EConfig;
 ```
 
 Keep the server's own logging on stderr: stdout carries the protocol.
