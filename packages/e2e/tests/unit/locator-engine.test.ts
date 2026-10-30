@@ -292,6 +292,18 @@ describe('LocatorEngine perform contract', () => {
     expect(calls.resolve).toBe(2);
   });
 
+  it('never sends an action whose target resolved past the deadline', async () => {
+    const { engine, calls } = makeEngine({
+      resolve: [slowResolve(200, []), slowResolve(200, [REF])] as unknown as Array<() => readonly NodeRef[]>,
+    });
+    await expect(engine.performUntil(EXPRESSION, { kind: 'tap' }, new Deadline(350))).rejects.toMatchObject({
+      code: 'ACTION_FAILED',
+      message: expect.stringContaining('before the tap was sent'),
+    });
+    expect(calls.resolve).toBe(2);
+    expect(calls.perform).toBe(0);
+  });
+
   it('marks every action it performs with the test origin, so an engine can act without settling', async () => {
     const { engine, origins } = makeEngine({});
     await engine.perform(EXPRESSION, { kind: 'tap' });

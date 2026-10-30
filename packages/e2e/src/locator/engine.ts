@@ -549,6 +549,13 @@ export class LocatorEngine {
       const resolved = typeof action === 'function' ? await action(deadline, ref) : action;
       const record = (status: StepEvent['status'], code?: string): void =>
         this.recordAction({ node, kind: resolved.kind, startedAt, startedMs, waitedMs, stale, status, code });
+      // A read may finish past the deadline so its result is classed right,
+      // but an action that would start past it is never sent.
+      if (deadline.expired()) {
+        const failure = new TestError('ACTION_FAILED', `operation timed out before the ${resolved.kind} was sent: ${describeExpression(expression)}`);
+        record('failed', failure.code);
+        throw failure;
+      }
       try {
         await this.session.perform(ref, resolved, this.operationWithin(deadline));
       } catch (cause) {
