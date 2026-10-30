@@ -10,9 +10,10 @@ icon: "gear"
 such as a browser or simulator. An engine implements shared types for nodes,
 locators, actions, and errors. `defineEngine` validates and freezes the
 implementation, derives its capabilities, and returns a handle for `targets`
-in the config. The harness drives the handle over the
-[engine protocol](/reference/engine-protocol), served in the runner's process. Use `test.extend` fixtures for resources outside the UI, such
-as APIs or databases.
+in the config. The runner drives it over the
+[engine protocol](/reference/engine-protocol), in its own process; see
+[Engines](/engines). Use `test.extend` fixtures for resources outside the UI,
+such as APIs or databases.
 
 This sketch assumes a `connect` adapter for the platform:
 
@@ -2256,9 +2257,10 @@ scope, filter, or index too.
 
 ## Related
 
-[Engine protocol](/reference/engine-protocol) runs an engine in another
-process, on another machine, or in another language.
-[Writing an engine](/writing-an-engine) walks through building one.
+[Engines](/engines) compares the ways to build one.
+[Writing an engine](/writing-an-engine) walks through `defineEngine`, and
+[Engine servers](/engine-servers) runs an engine in another process,
+machine, or language.
 `@e2e-dev/web` ([reference](/reference/web)) and `@e2e-dev/mobile`
 ([reference](/reference/mobile)) implement this contract with the same
 public `defineEngine`.

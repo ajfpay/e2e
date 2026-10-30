@@ -7,33 +7,18 @@ icon: "network-wired"
 ---
 
 The engine protocol is the [engine contract](/reference/engine) as JSON-RPC
-messages, and the harness drives every engine over it. An engine built with
-`defineEngine` is served [in the runner's process](#engines-in-the-runners-process).
-With `connectEngine`, an engine runs elsewhere: in a child process, on
-another machine, or on a device, written in any language.
+messages. The runner drives every engine over it. To run an engine in
+another process, machine, or language, see
+[Engine servers](/engine-servers).
 
 ```ts title="e2e.config.ts"
-import type { E2EConfig } from 'e2e';
 import { connectEngine, spawnTransport } from 'e2e/engine';
 
-export default {
-  targets: [
-    {
-      name: 'kiosk',
-      engine: connectEngine({
-        manifest: {
-          name: 'kiosk',
-          version: '1.0.0',
-          spiVersion: 1,
-          methods: ['engine/observe', 'engine/perform'],
-          actions: ['tap'],
-        },
-        transport: spawnTransport({ command: './kiosk-engine' }),
-        resolveLocators: true,
-      }),
-    },
-  ],
-} satisfies E2EConfig;
+engine: connectEngine({
+  manifest: { name: 'kiosk', version: '1.0.0', spiVersion: 1, methods: ['engine/observe'] },
+  transport: spawnTransport({ command: './kiosk-engine' }),
+  resolveLocators: true,
+}),
 ```
 
 ## Reference
@@ -75,10 +60,8 @@ export interface ConnectEngineOptions {
 }
 ```
 
-The harness needs an engine's capabilities at config load, before any
-server runs, so the client declares the manifest. A server whose manifest
-differs fails its first connection with `ENGINE_FAILURE`, naming each field
-that differs.
+The runner reads the manifest at config load, before any server runs. A
+server whose manifest differs fails its first connection.
 
 A handle opens its connections where the harness calls the engine. In the
 runner, one connection per target lives from `prepare` to `finish`, and
@@ -92,24 +75,17 @@ server gets a process per connection, and a loopback or socket server may
 serve them all from one engine.
 
 With `resolveLocators`, each `locate` observes and resolves the expression
-over the tree with [`resolveExpression`](/reference/engine#resolveexpression).
-A server then only has to produce a tree.
+with [`resolveExpression`](/reference/engine#resolveexpression).
+`fixtures`, `validateApp`, `secrets`, and `session` hooks run on the client;
+a `session` hook replaces the server's method of the same name. See
+[Keep host work on the client](/engine-servers#keep-host-work-on-the-client).
 
 <Warning>
-A server receives what an engine in the runner's process would:
 `lifecycle/prepare`, `lifecycle/init`, and `lifecycle/finish` carry the
 run's environment, model keys and `E2E_SECRET_*` values included, and
 `attempt/resolveSecret` answers with plaintext. Connect only to a server you
-trust, over a channel you trust: `socketTransport` sends it unencrypted.
+trust: `socketTransport` doesn't encrypt.
 </Warning>
-
-`fixtures`, `validateApp`, and `secrets` stay on the client: they hold
-functions and handles that cannot cross a connection. A fixture reaches the
-server through the handle's own members.
-
-`session` hooks also run on the client, each in place of the server's method
-of the same name. Use them for what only the host can do, such as relaunching
-an app on a simulator.
 
 | Throws | When |
 | --- | --- |
@@ -128,14 +104,8 @@ export function serveEngine(
 ): Promise<void>;
 ```
 
-```ts title="server.ts"
-import { serveEngine } from 'e2e/engine';
-import { kiosk } from './src/index.ts';
-
-await serveEngine((options) => kiosk(options as { host: string }));
-```
-
-Keep the server's own logging on stderr: stdout carries the protocol.
+Keep the server's own logging on stderr: stdout carries the protocol. See
+[Serve a TypeScript engine](/engine-servers#serve-a-typescript-engine).
 
 ### `describeEngine`
 
@@ -181,39 +151,6 @@ crosses the protocol, serialized as on any other transport.
 
 ```ts
 export function loopbackTransport(engine: EngineHandle): EngineTransport;
-```
-
-## Writing a transport
-
-A transport opens one connection's byte streams. Write one when a server
-needs provisioning first, such as an app installed on a device and a port
-forwarded to it.
-
-```ts
-export interface EngineTransport {
-  /** For error messages: the command, or the address. */
-  readonly label: string;
-  open(context: TransportContext): Promise<TransportConnection>;
-}
-
-export interface TransportContext {
-  readonly role: 'run' | 'worker';
-  readonly env: Readonly<Record<string, string | undefined>>;
-  /** The project root. */
-  readonly cwd: string;
-  readonly signal: AbortSignal;
-  /** The target's app, from `prepare` or `init`: what a transport installs, since a server elsewhere cannot read the project's files. */
-  readonly app?: EngineAppInfo;
-}
-
-export interface TransportConnection {
-  readonly input: Readable;
-  readonly output: Writable;
-  /** Releases the process or socket, within `timeoutMs`. */
-  close(timeoutMs: number): Promise<void>;
-  /** What went wrong, for an error message. */
-  diagnostics?(): string;
-}
 ```
 
 ## Messages
@@ -342,15 +279,41 @@ Any other error code carries the message alone. The harness treats it as
 an infrastructure failure, as it treats a plain `Error` from a local
 engine.
 
-## Engines in the runner's process
+## Types
 
-An engine built with `defineEngine` runs through the protocol too, over
-`loopbackTransport`: every call crosses the wire format a remote engine
-receives. An engine that passes its suite needs nothing the protocol cannot
-carry. Fixtures, `validateApp`, and declared secrets stay the engine's own,
-in the runner's process.
+A transport opens one connection's byte streams. See
+[Write a transport](/engine-servers#write-a-transport).
+
+```ts
+export interface EngineTransport {
+  /** For error messages: the command, or the address. */
+  readonly label: string;
+  open(context: TransportContext): Promise<TransportConnection>;
+}
+
+export interface TransportContext {
+  readonly role: 'run' | 'worker';
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** The project root. */
+  readonly cwd: string;
+  readonly signal: AbortSignal;
+  /** The target's app, from `prepare` or `init`: what a transport installs, since a server elsewhere cannot read the project's files. */
+  readonly app?: EngineAppInfo;
+}
+
+export interface TransportConnection {
+  readonly input: Readable;
+  readonly output: Writable;
+  /** Releases the process or socket, within `timeoutMs`. */
+  close(timeoutMs: number): Promise<void>;
+  /** What went wrong, for an error message. */
+  diagnostics?(): string;
+}
+```
 
 ## Related
 
+[Engines](/engines) compares the ways to build one.
 [`e2e/engine`](/reference/engine) is the contract each message carries.
-[Writing an engine](/writing-an-engine) walks through building one.
+[Engine servers](/engine-servers) and [Writing an engine](/writing-an-engine)
+walk through building one.

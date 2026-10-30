@@ -125,8 +125,15 @@
               "tools",
               "fixtures",
               "executors",
-              "filters",
-              "writing-an-engine"
+              "filters"
+            ]
+          },
+          {
+            "group": "Engines",
+            "pages": [
+              "engines",
+              "writing-an-engine",
+              "engine-servers"
             ]
           },
           {
@@ -195,7 +202,7 @@
             ]
           },
           {
-            "group": "Engine contract",
+            "group": "Engines",
             "pages": [
               "reference/engine",
               "reference/engine-protocol"
