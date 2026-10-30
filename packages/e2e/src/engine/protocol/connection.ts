@@ -248,7 +248,7 @@ export class Connection {
     this.#pending.delete(id);
     if (error === undefined) pending.resolve(result);
     else if (isRpcErrorObject(error)) pending.reject(new RpcError(error));
-    else pending.reject(new RpcError({ code: RPC_ERRORS.internalError, message: `the peer answered with a malformed error: ${String(JSON.stringify(error)).slice(0, 200)}` }));
+    else pending.reject(new RpcError({ code: RPC_ERRORS.internalError, message: `the peer answered with a malformed error (${error === null ? 'null' : typeof error}), not { code, message }` }));
   }
 
   async #answer(id: RequestId, method: string, params: unknown): Promise<void> {
