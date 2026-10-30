@@ -185,10 +185,11 @@ const CHANGE_RULES = [
 
 /** The skip, offered before the first step of a change the context shows in full. */
 const SKIP_RULES = [
-  '- "skip": only when no changed file can change what a user sees or does: documentation, code comments, test files,',
-  '  formatting only. Anything else, or any doubt, is a step: a wasted step costs minutes, a missed regression reaches',
-  '  users. Such a change is a "skip", not a "finish". "summary" names the changed files and says why none of them',
-  '  reaches a screen.',
+  '- "skip": only when no changed file can change what a user sees or does: documentation, code comments, formatting',
+  '  only, tests of every kind (a unit or end-to-end test that walks a user flow changes what is checked, not the app),',
+  '  and files that never ship in the app, such as component stories. Anything else, or any doubt, is a step: a wasted',
+  '  step costs minutes, a missed regression reaches users. Such a change is a "skip", not a "finish". "summary" names',
+  '  the changed files and says why none of them reaches a screen.',
 ];
 
 /** The planner's instruction: the goal, the record so far, the budget, and how to decide. */
