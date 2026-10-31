@@ -12,3 +12,6 @@ next-env.d.ts
 .e2e/summary.md
 .e2e/logs/
 .e2e/videos/
+# A run with `--output <dir>` writes the same report, traces and artifacts one
+# level down.
+.e2e/*/
