@@ -4,19 +4,6 @@
 greeter. It needs that app running and real credentials, so it is left out of
 `e2e.config.ts` and runs from `e2e.suara.config.ts`.
 
-## Prerequisites
-
-- The repository's packages built — the suite imports the built ones, not the
-  published ones: `pnpm install && pnpm run build`.
-- `psql` on `PATH`: the suite creates the session its document test needs.
-- The app built and running:
-
-  ```bash
-  cd /home/ubuntu/repos/suara-lapangan
-  npm ci && npm run build
-  npm run start -- --port 3021
-  ```
-
 ## Environment
 
 | Variable | What it is |
@@ -28,6 +15,23 @@ greeter. It needs that app running and real credentials, so it is left out of
 Both secrets come from Akeyless: `/workstation/credential/terravoce-db` (field
 `url`) and `/workstation/credential/muse` (field `api_key`). Export them into the
 environment; never pass them on a command line.
+
+The app process reads `DATABASE_URL` and `MODEL_API_KEY`. The test command reads
+`DATABASE_URL` and `SUARA_APP_URL`. Start the app and run the tests in the same
+environment, so the app has its secrets before any request reaches it.
+
+## Prerequisites
+
+- The repository's packages built. The suite imports the built ones, not the
+  published ones: `pnpm install && pnpm run build`.
+- `psql` on `PATH`: the suite creates the session its document test needs.
+- The app built and running. Start it only after exporting the environment above:
+
+  ```bash
+  cd /home/ubuntu/repos/suara-lapangan
+  npm ci && npm run build
+  npm run start -- --port 3021
+  ```
 
 ## Run
 

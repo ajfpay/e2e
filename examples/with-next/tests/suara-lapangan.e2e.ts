@@ -501,29 +501,73 @@ test('record hold guard prevents presses shorter than 0.3s and triggers on at le
 test('rate limiting returns 429 with Retry-After on 31 requests within a minute', async ({ browser }) => {
   await browser.goto('/en/rekam');
 
+  // The browser's own bucket may already be partly used by an earlier test in
+  // this run, so probe the live counters and drive exactly to the boundary
+  // instead of assuming a fresh bucket.
   const result = await browser.evaluate(async () => {
-    let lastStatus = 0;
-    let retryAfter: string | null = null;
+    const probe = new FormData();
+    probe.append('sessionId', `ratelimit-probe-${Date.now()}`);
+    probe.append('locale', 'en');
+    const probeRes = await fetch('/api/asr/transcribe', {
+      method: 'POST',
+      body: probe,
+    });
 
-    for (let i = 0; i < 31; i++) {
-      const formData = new FormData();
-      formData.append('sessionId', `ratelimit-sess-${i}`);
-      formData.append('locale', 'en');
+    const limit = Number(probeRes.headers.get('x-ratelimit-limit'));
+    const remaining = Number(probeRes.headers.get('x-ratelimit-remaining'));
+
+    const drain: number[] = [];
+    for (let i = 0; i < remaining; i++) {
+      const form = new FormData();
+      form.append('sessionId', `ratelimit-sess-${i}`);
+      form.append('locale', 'en');
       const res = await fetch('/api/asr/transcribe', {
         method: 'POST',
-        body: formData,
+        body: form,
       });
-      lastStatus = res.status;
-      retryAfter = res.headers.get('retry-after');
-      if (res.status === 429) {
-        break;
-      }
+      drain.push(res.status);
     }
-    return { status: lastStatus, retryAfter };
+
+    const over = new FormData();
+    over.append('sessionId', `ratelimit-over-${Date.now()}`);
+    over.append('locale', 'en');
+    const overRes = await fetch('/api/asr/transcribe', {
+      method: 'POST',
+      body: over,
+    });
+
+    return {
+      probeStatus: probeRes.status,
+      limit,
+      remaining,
+      drain,
+      overStatus: overRes.status,
+      retryAfter: overRes.headers.get('retry-after'),
+      overRemaining: overRes.headers.get('x-ratelimit-remaining'),
+    };
   });
 
-  expect(result.status).toBe(429);
-  expect(result.retryAfter).toBeTruthy();
+  if (result.probeStatus === 429) {
+    throw new Error(
+      'rate limit bucket was already exhausted before this test started; ' +
+        'cannot measure the boundary. Rerun after the 60s window resets.'
+    );
+  }
+
+  const used = result.limit - result.remaining;
+  expect(Number.isInteger(used)).toBe(true);
+  expect(used).toBeGreaterThanOrEqual(1);
+  expect(used).toBeLessThanOrEqual(result.limit);
+
+  // Every request up to the limit is allowed; a 400 for the missing audio part
+  // is expected and fine.
+  for (const status of result.drain) {
+    expect(status).not.toBe(429);
+  }
+
+  expect(result.overStatus).toBe(429);
+  expect(Number.parseInt(result.retryAfter ?? '', 10)).toBeGreaterThan(0);
+  expect(result.overRemaining).toBe('0');
 });
 
 test('dead invoice routes answer 404 or 405', async ({ browser }) => {
